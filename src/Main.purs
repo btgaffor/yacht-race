@@ -5,16 +5,20 @@ import Prelude
 import Control.Monad.Cont (ContT(..), runContT)
 import Control.Monad.State (evalStateT, gets, lift, modify_)
 import CreateBox (createBoxElement, setStyleProp)
+import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Maybe (Maybe(..))
-import Effect (Effect)
-import Effect.Console (error, log, logShow)
 import Ecs (class GetStore, class SaveStore, Entity(..), EntityCount, Global, SystemT, cmap, get, initStore, newEntity)
+import Effect (Effect)
+import Effect.Console (error, log)
+import Effect.Ref (Ref, modify_, new, read) as Ref
+import Graphics.Canvas (Context2D, clearRect, fillRect, getCanvasElementById, getContext2D)
 import Web.DOM.Document (createElement) as DOM
 import Web.DOM.Element as DOM.Element
 import Web.DOM.Node (appendChild) as DOM
+import Web.DOM.Node (toEventTarget)
 import Web.DOM.NonElementParentNode (getElementById)
-import Web.Event.Event (EventType(..))
+import Web.Event.Event (Event, EventType(..))
 import Web.Event.EventTarget (addEventListener, eventListener)
 import Web.HTML (window)
 import Web.HTML (window) as HTML
@@ -23,6 +27,7 @@ import Web.HTML.HTMLDocument (toNonElementParentNode)
 import Web.HTML.HTMLElement as HTML.HTMLElement
 import Web.HTML.Window (document)
 import Web.HTML.Window as HTML.Window
+import Web.UIEvent.KeyboardEvent as KeyboardEvent
 
 data Position
   = Position Int
@@ -53,11 +58,11 @@ initWorld = do
       Just b' -> HTML.HTMLElement.toNode b'
   boxEl <- createBoxElement "the-box" $ HTML.toDocument d
   newBody <- DOM.appendChild (DOM.Element.toNode boxEl) b
-
-  pure $ World
-    { entityCounter: initStore
-    , positions: initStore
-    }
+  pure
+    $ World
+        { entityCounter: initStore
+        , positions: initStore
+        }
 
 instance hasEntityCounter :: GetStore World EntityCount (Global EntityCount) where
   getStore _ = gets (unWorld >>> _.entityCounter)
@@ -76,47 +81,95 @@ createEntities = do
   _ <- newEntity $ Position 20
   pure unit
 
--- setupInput :: SystemT World (ContT Unit Effect) Unit
--- setupInput = do
---   listener <- lift <<< lift $ eventListener (\e -> log "hi")
---   w <- HTML.window
---   d <- HTML.Window.document w
---   mBody <- HTML.body d
---   defaultElem <- (DOM.createElement "span" (HTML.toDocument d))
---   -- Maybe pattern matching
---   let
---     b = case mBody of
---       Nothing -> DOM.Element.toNode (defaultElem)
---       Just b' -> HTML.HTMLElement.toNode b'
---   addEventListener (EventType "keydown") listener false b
+type Keys
+  = { arrowLeft :: Boolean
+    , arrowRight :: Boolean
+    }
 
-runGame :: SystemT World (ContT Unit Effect) Unit
-runGame = do
+handleKeydown :: Ref.Ref Keys -> Event -> Effect Unit
+handleKeydown keys event = case KeyboardEvent.fromEvent event of
+  Nothing -> pure unit
+  -- Just keyboardEvent -> log $ "keydown: " <> KeyboardEvent.code keyboardEvent
+  Just keyboardEvent -> case KeyboardEvent.code keyboardEvent of
+    "ArrowLeft" -> Ref.modify_ (\s -> s { arrowLeft = true }) keys
+    "ArrowRight" -> Ref.modify_ (\s -> s { arrowRight = true }) keys
+    _ -> pure unit
+
+handleKeyup :: Ref.Ref Keys -> Event -> Effect Unit
+handleKeyup keys event = case KeyboardEvent.fromEvent event of
+  Nothing -> pure unit
+  Just keyboardEvent -> case KeyboardEvent.code keyboardEvent of
+    "ArrowLeft" -> Ref.modify_ (\s -> s { arrowLeft = false }) keys
+    "ArrowRight" -> Ref.modify_ (\s -> s { arrowRight = false }) keys
+    _ -> pure unit
+
+setupInput :: Ref.Ref Keys -> Effect Unit
+setupInput keys = do
+  keydownListener <- eventListener (handleKeydown keys)
+  keyupListener <- eventListener (handleKeyup keys)
+  mBody <- HTML.body =<< HTML.Window.document =<< HTML.window
+  case mBody of
+    Nothing -> error "no body element to attach event listener to"
+    Just body' -> do
+      addEventListener (EventType "keydown") keydownListener false (toEventTarget $ HTML.HTMLElement.toNode body')
+      addEventListener (EventType "keyup") keyupListener false (toEventTarget $ HTML.HTMLElement.toNode body')
+
+type StepFrame = Keys -> SystemT World (ContT Unit Effect) Unit
+type RenderFrame = SystemT World (ContT Unit Effect) (Context2D -> Effect Unit)
+
+runGame :: StepFrame -> RenderFrame -> SystemT World (ContT Unit Effect) Unit
+runGame gameFrame'' renderFrame'' = do
+  keysRef <- lift <<< lift $ Ref.new { arrowLeft: false, arrowRight: false }
+  lift <<< lift $ setupInput keysRef
   createEntities
-  gameLoop
+  gameLoop keysRef gameFrame'' renderFrame''
 
-gameLoop :: SystemT World (ContT Unit Effect) Unit
-gameLoop = do
-  cmap $ \(Position p) -> Position (p + 1)
-  Position p <- get (Entity 0)
+gameLoop :: Ref.Ref Keys -> StepFrame -> RenderFrame -> SystemT World (ContT Unit Effect) Unit
+gameLoop keysRef gameFrame renderFrame = do
+  keys <- lift <<< lift $ Ref.read keysRef
+
+  gameFrame keys
+  r <- renderFrame
+
   w <- lift <<< lift $ HTML.window
-  -- rather than using a separate function - fold together rendering functions and pass that to rAF
-  lift $ ContT $ \next -> void $ HTML.Window.requestAnimationFrame (render p next) w
-  -- gameLoop
-  pure unit
+  lift $ ContT $ \next -> void $ HTML.Window.requestAnimationFrame (rAF r next) w
 
-render :: Int -> (Unit -> Effect Unit) -> Effect Unit
-render position next = do
-  -- w <- HTML.window
-  -- _ <- HTML.Window.requestAnimationFrame (render $ position + 1) w
-  container <- getElementById "the-box" =<< (map toNonElementParentNode $ document =<< window)
-  case container of
-    Nothing -> error "Could not find DOM node to mount on" *> pure unit
-    Just node -> setStyleProp "transform" ("translate(" <> show position <> "px, 0)") node *> pure unit
+  gameLoop keysRef gameFrame renderFrame
 
+
+gameFrame' :: StepFrame
+gameFrame' keys = do
+  when keys.arrowLeft do cmap $ \(Position p) -> Position (p - 5)
+  when keys.arrowRight do cmap $ \(Position p) -> Position (p + 5)
+
+renderFrame' :: RenderFrame
+renderFrame' = do
+  Position p <- get (Entity 0)
+  pure $ \context ->
+    renderPlayer p context
+
+renderPlayer :: Int -> Context2D -> Effect Unit
+renderPlayer position context =
+  fillRect context { x: toNumber position, y: 5.0, width: 20.0, height: 20.0 }
+
+rAF :: (Context2D -> Effect Unit) -> (Unit -> Effect Unit) -> Effect Unit
+rAF render next = do
+  mCanvas <- getCanvasElementById "canvas"
+  case mCanvas of
+    Nothing -> error "No canvas"
+    Just canvas -> do
+      context <- getContext2D canvas
+      clearRect context { x: 0.0, y: 0.0, width: 800.0, height: 600.0 }
+      render context
+
+  -- container <- getElementById "the-box" =<< (map toNonElementParentNode $ document =<< window)
+  -- case container of
+  --   Nothing -> error "Could not find the box"
+  --   Just node -> setStyleProp "transform" ("translate(" <> show position <> "px, 0)") node *> pure unit
   next unit
 
 main :: Effect Unit
-main = void $ do
+main = do
   world <- initWorld
-  runContT (evalStateT runGame world) pure
+  runContT (evalStateT (runGame gameFrame' renderFrame') world) pure
+  pure unit
