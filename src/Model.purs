@@ -11,7 +11,7 @@ import Type.Prelude (Proxy(..))
 
 data Score = Score Int
 
-data GameStateValue = Running | Won
+data GameStateValue = Waiting | Running | Won | Lost
 derive instance eqGameStateValue :: Eq GameStateValue
 
 data GameState = GameState GameStateValue
@@ -64,7 +64,7 @@ initWorld = do
     $ World
         { entityCounter: initStore
         , score: Global (Score 0)
-        , gameState: Global (GameState Running)
+        , gameState: Global (GameState Waiting)
         , player: initStore
         , alien: initStore
         , missile: initStore
