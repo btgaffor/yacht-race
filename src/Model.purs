@@ -11,6 +11,8 @@ import Type.Prelude (Proxy(..))
 
 data Score = Score Int
 
+data Level = Level Int
+
 data GameStateValue = Waiting | Running | Won | Lost
 derive instance eqGameStateValue :: Eq GameStateValue
 
@@ -20,16 +22,18 @@ data Player
   = Player
 
 data Alien = Alien
-alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity Collision)))
+alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
 data Missile = Missile
 missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position (Tuple Velocity Collision)))
 
 data Bomb = Bomb
-bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity Collision)))
+bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
 data Particle = Particle
 particleComponents = Proxy :: Proxy (Tuple Particle (Tuple Position Velocity))
+
+data Accelerate = Accelerate
 
 data Position
   = Position { x :: Number, y :: Number }
@@ -45,12 +49,14 @@ data MissileTimer = MissileTimer Int
 type WorldInner =
   { entityCounter :: Global EntityCount
   , score :: Global Score
+  , level :: Global Level
   , gameState :: Global GameState
   , player :: Unique Player
   , alien :: Map Entity Alien
   , missile :: Map Entity Missile
   , bomb :: Map Entity Bomb
   , particle :: Map Entity Particle
+  , accelerate :: Map Entity Accelerate
   , position :: Map Entity Position
   , velocity :: Map Entity Velocity
   , drawable :: Map Entity Collision
@@ -68,12 +74,14 @@ initWorld = do
     $ World
         { entityCounter: initStore
         , score: Global (Score 0)
+        , level: Global (Level 1)
         , gameState: Global (GameState Waiting)
         , player: initStore
         , alien: initStore
         , missile: initStore
         , bomb: initStore
         , particle: initStore
+        , accelerate: initStore
         , position: initStore
         , velocity: initStore
         , drawable: initStore
@@ -135,6 +143,15 @@ instance saveStoreParticle :: SaveStore World (Map Entity Particle) where
   saveStore value = modify_ (unWorld >>> _ { particle = value } >>> World)
 
 --------------
+-- Accelerate --
+--------------
+instance hasAccelerate :: GetStore World Accelerate (Map Entity Accelerate) where
+  getStore _ = gets (unWorld >>> _.accelerate)
+
+instance saveStoreAccelerate :: SaveStore World (Map Entity Accelerate) where
+  saveStore value = modify_ (unWorld >>> _ { accelerate = value } >>> World)
+
+--------------
 -- Position --
 --------------
 instance getStorePosition :: GetStore World Position (Map Entity Position) where
@@ -178,6 +195,15 @@ instance getStoreScore :: GetStore World Score (Global Score) where
 
 instance saveStoreScore :: SaveStore World (Global Score) where
   saveStore value = modify_ (unWorld >>> _ { score = value } >>> World)
+
+-----------
+-- Level --
+-----------
+instance getStoreLevel :: GetStore World Level (Global Level) where
+  getStore _ = gets (unWorld >>> _.level)
+
+instance saveStoreLevel :: SaveStore World (Global Level) where
+  saveStore value = modify_ (unWorld >>> _ { level = value } >>> World)
 
 ---------------
 -- GameState --
