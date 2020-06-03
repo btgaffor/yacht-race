@@ -20,13 +20,16 @@ data Player
   = Player
 
 data Alien = Alien
-alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position Collision))
+alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity Collision)))
 
 data Missile = Missile
-missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position Collision))
+missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position (Tuple Velocity Collision)))
 
 data Bomb = Bomb
-bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position Collision))
+bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity Collision)))
+
+data Particle = Particle
+particleComponents = Proxy :: Proxy (Tuple Particle (Tuple Position Velocity))
 
 data Position
   = Position { x :: Number, y :: Number }
@@ -47,6 +50,7 @@ type WorldInner =
   , alien :: Map Entity Alien
   , missile :: Map Entity Missile
   , bomb :: Map Entity Bomb
+  , particle :: Map Entity Particle
   , position :: Map Entity Position
   , velocity :: Map Entity Velocity
   , drawable :: Map Entity Collision
@@ -69,6 +73,7 @@ initWorld = do
         , alien: initStore
         , missile: initStore
         , bomb: initStore
+        , particle: initStore
         , position: initStore
         , velocity: initStore
         , drawable: initStore
@@ -119,6 +124,15 @@ instance hasBomb :: GetStore World Bomb (Map Entity Bomb) where
 
 instance saveStoreBomb :: SaveStore World (Map Entity Bomb) where
   saveStore value = modify_ (unWorld >>> _ { bomb = value } >>> World)
+
+--------------
+-- Particle --
+--------------
+instance hasParticle :: GetStore World Particle (Map Entity Particle) where
+  getStore _ = gets (unWorld >>> _.particle)
+
+instance saveStoreParticle :: SaveStore World (Map Entity Particle) where
+  saveStore value = modify_ (unWorld >>> _ { particle = value } >>> World)
 
 --------------
 -- Position --

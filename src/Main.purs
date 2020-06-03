@@ -3,17 +3,19 @@ module Main where
 import Prelude
 
 import Control.Monad.Reader (ReaderT, ask, lift, runReaderT)
+import Data.Array (range)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
-import Data.Traversable (traverse_)
+import Data.Traversable (for, traverse_)
 import Data.Tuple.Nested ((/\))
 import Ecs (Entity(..), Not(..), SystemT, cfold, cmap, cmapM_, destroy, get, modifyGlobal, newEntity, set)
 import EcsCanvas (GameSetup, RenderFrame, StepFrame, StepFrameKeys, canvasWidth, runGameEngine)
 import Effect (Effect)
-import Effect.Console (log)
-import Effect.Random (randomInt)
+import Effect.Console (log, logShow)
+import Effect.Random (randomInt, randomRange)
 import Graphics.Canvas (Context2D, arc, bezierCurveTo, closePath, fillPath, fillText, lineTo, moveTo, rect, setFillStyle, setFont, withContext)
-import Model (Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Missile(..), MissileTimer(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, initWorld, missileComponents)
+import Math (cos, pi, sin, sqrt)
+import Model (Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, initWorld, missileComponents, particleComponents)
 
 generateRandomBombTimeout :: Effect Int
 generateRandomBombTimeout = randomInt 25 300
@@ -57,6 +59,7 @@ gameFrame keys = do
       aliensDropBombs
       bounceAliens
       moveNotPlayers
+      slowParticles
       clampPlayer
       checkMissileCollisions
       checkBombCollisions
@@ -114,6 +117,14 @@ moveNotPlayers :: StepFrame World
 moveNotPlayers = do
   cmap $ \(Position { x, y } /\ Velocity { vx, vy } /\ (Not :: Not Player)) -> Position { x: x + vx, y: y + vy }
 
+slowParticles :: SystemT World Effect Unit
+slowParticles = do
+  cmapM_ $ \(Particle /\ (e :: Entity) /\ Velocity { vx, vy }) ->
+    if (sqrt (vx * vx + vy * vy) <= 0.1) then
+      destroy e particleComponents
+    else
+      set e (Velocity { vx: vx * 0.90, vy: vy * 0.90 })
+
 bounceAliens :: StepFrame World
 bounceAliens = do
   shouldBounce <-
@@ -124,7 +135,7 @@ bounceAliens = do
       false
   when shouldBounce do cmap $ \(Alien /\ Velocity v) -> Velocity (v { vx = -v.vx })
 
-clampPlayer :: StepFrame World
+clampPlayer :: SystemT World Effect Unit
 clampPlayer = cmap $ \(Player /\ Position { x, y } /\ Collision { width }) -> Position { x: x # min (canvasWidth - width) # max 0.0, y }
 
 checkMissileCollisions :: StepFrame World
@@ -137,6 +148,18 @@ checkMissileCollisions = do
                 destroy eAlien alienComponents
                 destroy eMissile missileComponents
                 modifyGlobal $ \(Score score) -> Score (score + 50)
+                generateAlienParticles alienP
+
+generateAlienParticles :: Position -> SystemT World Effect Unit
+generateAlienParticles (Position { x, y }) = do
+  numParticles <- lift $ randomInt 3 5
+  void $ for (range 1 numParticles) \n -> do
+    angle <- lift $ randomRange 0.0 (2.0 * pi)
+    let
+      vx = 3.0 * cos(angle)
+      vy = 3.0 * sin(angle)
+
+    void $ newEntity $ Particle /\ Position { x: x + 25.0, y: y + 25.0 } /\ Velocity { vx, vy }
 
 checkBombCollisions :: StepFrame World
 checkBombCollisions = do
@@ -194,6 +217,7 @@ renderFrame = do
   renderMissiles <- cfold (\acc (Missile /\ (p :: Position)) -> acc <> renderMissile p) (pure unit)
   renderBombs <- cfold (\acc (Bomb /\ (p :: Position)) -> acc <> renderBomb p) (pure unit)
   renderAliens <- cfold (\acc (Alien /\ (p :: Position)) -> acc <> renderAlien p) (pure unit)
+  renderParticles <- cfold (\acc (Particle /\ (p :: Position)) -> acc <> renderParticle p) (pure unit)
   renderPlayers <- cfold (\acc (Player /\ (p :: Position)) -> acc <> renderPlayer p) (pure unit)
   Score score <- get (Entity 0)
   let
@@ -201,8 +225,13 @@ renderFrame = do
       case state of
         Waiting ->
           renderWaiting
-        Running ->
-          renderMissiles <> renderBombs <> renderAliens <> renderPlayers <> renderScore score
+        Running -> do
+          renderMissiles
+          renderBombs
+          renderAliens
+          renderParticles
+          renderPlayers
+          renderScore score
         Won ->
           renderVictory score
         Lost ->
@@ -258,6 +287,14 @@ renderAlien (Position { x, y }) = do
         setFillStyle context "lightgray"
         renderEllipse context (x + 25.0) (y + 35.0) 5.0 10.0
   pure unit
+
+renderParticle :: Position -> ReaderT Context2D Effect Unit
+renderParticle (Position { x, y }) = do
+  context <- ask
+  lift
+    $ withContext context do
+        setFillStyle context "orange"
+        fillPath context $ arc context { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
 
 renderPlayer :: Position -> ReaderT Context2D Effect Unit
 renderPlayer (Position { x, y }) = do
