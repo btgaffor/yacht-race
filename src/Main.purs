@@ -2,19 +2,20 @@ module Main where
 
 import Prelude
 
-import Control.Monad.Reader (ReaderT, ask, lift, runReaderT)
+import Control.Monad.Reader (ReaderT, lift, runReaderT)
 import Data.Array (range)
 import Data.Either (Either(..))
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..))
 import Data.Traversable (for, traverse_)
 import Data.Tuple.Nested ((/\))
-import Ecs (Entity(..), Not(..), SystemT, cfold, cmap, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
-import EcsCanvas (GameSetup, RenderFrame, StepFrame, StepFrameKeys, canvasHeight, canvasWidth, runGameEngine)
+import Ecs (Entity(..), Not(..), SystemT, cfold, cfoldMap, cmap, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
+import EcsCanvas (arc, beginPath, closePath, fill, fillText, lineTo, moveTo, rect, renderEllipse, setFillStyle, setFont)
+import EcsGameLoop (GameSetup, RenderFrame, StepFrame, StepFrameKeys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
 import Effect.Random (randomInt, randomRange)
 import Effect.Ref (modify_, read)
-import Graphics.Canvas (Context2D, arc, bezierCurveTo, closePath, fillPath, fillText, lineTo, moveTo, rect, setFillStyle, setFont, withContext)
+import Graphics.Canvas (Context2D)
 import Math (cos, pi, pow, sin, sqrt)
 import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, bombComponents, initWorld, missileComponents, particleComponents)
 
@@ -232,15 +233,15 @@ clearOffScreen = do
 -----------------
 renderFrame :: RenderFrame World
 renderFrame = do
-  -- TODO
   GameState state <- get (Entity global)
-  renderMissiles <- cfold (\acc (Missile /\ (p :: Position)) -> acc <> renderMissile p) (pure unit)
-  renderBombs <- cfold (\acc (Bomb /\ (p :: Position)) -> acc <> renderBomb p) (pure unit)
-  renderAliens <- cfold (\acc (Alien /\ (p :: Position)) -> acc <> renderAlien p) (pure unit)
-  renderParticles <- cfold (\acc (Particle /\ (p :: Position)) -> acc <> renderParticle p) (pure unit)
-  renderPlayers <- cfold (\acc (Player /\ (p :: Position)) -> acc <> renderPlayer p) (pure unit)
   Score score <- get (Entity global)
   Level level <- get (Entity global)
+
+  renderMissiles <- cfoldMap $ \(Missile /\ (p :: Position)) -> renderMissile p
+  renderBombs <- cfoldMap $ \(Bomb /\ (p :: Position)) -> renderBomb p
+  renderAliens <- cfoldMap $ \(Alien /\ (p :: Position)) -> renderAlien p
+  renderParticles <- cfoldMap $ \(Particle /\ (p :: Position)) -> renderParticle p
+  renderPlayers <- cfoldMap $ \(Player /\ (p :: Position)) -> renderPlayer p
   let
     render = case state of
       Waiting -> renderWaiting level
@@ -253,136 +254,100 @@ renderFrame = do
         renderScore score
       Won -> renderVictory score
       Lost -> renderLoss score
+
   pure $ \context -> runReaderT render context
 
 renderWaiting :: Int -> ReaderT Context2D Effect Unit
 renderWaiting level = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "white"
-        setFont context "64px sans-serif"
-        fillText context ("Level: " <> show level) 260.0 256.0
-        fillText context ("Press any key") 180.0 320.0
-        fillText context ("to start.") 270.0 384.0
-  pure unit
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("Level: " <> show level) 260.0 256.0
+  fillText "Press any key" 180.0 320.0
+  fillText "to start." 270.0 384.0
 
 renderMissile :: Position -> ReaderT Context2D Effect Unit
 renderMissile (Position { x, y }) = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "gray"
-        fillPath context $ arc context { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-        fillPath context $ rect context { x, y: y + 5.0, width: 10.0, height: 10.0 }
-        setFillStyle context "red"
-        fillPath context do
-          moveTo context (x + 8.0) (y + 15.0)
-          lineTo context (x + 5.0) (y + 21.0)
-          lineTo context (x + 2.0) (y + 15.0)
-          closePath context
-  pure unit
+  setFillStyle "gray"
+  arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
+  fill
+
+  rect { x, y: y + 5.0, width: 10.0, height: 10.0 }
+  fill
+
+  setFillStyle "red"
+  beginPath
+  moveTo (x + 8.0) (y + 15.0)
+  lineTo (x + 5.0) (y + 21.0)
+  lineTo (x + 2.0) (y + 15.0)
+  closePath
+  fill
 
 renderBomb :: Position -> ReaderT Context2D Effect Unit
 renderBomb (Position { x, y }) = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "gray"
-        fillPath context $ arc context { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-  pure unit
+  setFillStyle "gray"
+  arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
+  fill
 
 renderAlien :: Position -> ReaderT Context2D Effect Unit
 renderAlien (Position { x, y }) = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "green"
-        renderEllipse context (x + 25.0) (y + 20.0) 40.0 20.0
-        renderEllipse context (x + 5.0) (y + 25.0) 10.0 30.0
-        renderEllipse context (x + 45.0) (y + 25.0) 10.0 30.0
-        renderEllipse context (x + 25.0) (y + 25.0) 20.0 50.0
-        setFillStyle context "lightgray"
-        renderEllipse context (x + 25.0) (y + 35.0) 5.0 10.0
-  pure unit
+  setFillStyle "green"
+  renderEllipse (x + 25.0) (y + 20.0) 40.0 20.0
+  renderEllipse (x + 5.0) (y + 25.0) 10.0 30.0
+  renderEllipse (x + 45.0) (y + 25.0) 10.0 30.0
+  renderEllipse (x + 25.0) (y + 25.0) 20.0 50.0
+  setFillStyle "lightgray"
+  renderEllipse (x + 25.0) (y + 35.0) 5.0 10.0
 
 renderParticle :: Position -> ReaderT Context2D Effect Unit
 renderParticle (Position { x, y }) = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "orange"
-        fillPath context $ arc context { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
+  setFillStyle "orange"
+  arc { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
+  fill
 
 renderPlayer :: Position -> ReaderT Context2D Effect Unit
 renderPlayer (Position { x, y }) = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "lightgray"
-        fillPath context do
-          moveTo context (x + 25.0) y
-          lineTo context (x + 50.0) (y + 50.0)
-          lineTo context x (y + 50.0)
-          closePath context
-        setFillStyle context "red"
-        fillPath context do
-          moveTo context (x + 20.0) (y + 50.0)
-          lineTo context (x + 15.0) (y + 60.0)
-          lineTo context (x + 10.0) (y + 50.0)
-          closePath context
-        fillPath context do
-          moveTo context (x + 40.0) (y + 50.0)
-          lineTo context (x + 35.0) (y + 60.0)
-          lineTo context (x + 30.0) (y + 50.0)
-          closePath context
-  pure unit
+  setFillStyle "lightgray"
+
+  beginPath
+  moveTo (x + 25.0) y
+  lineTo (x + 50.0) (y + 50.0)
+  lineTo x (y + 50.0)
+  closePath
+  fill
+
+  setFillStyle "red"
+  beginPath
+  moveTo (x + 20.0) (y + 50.0)
+  lineTo (x + 15.0) (y + 60.0)
+  lineTo (x + 10.0) (y + 50.0)
+  closePath
+  fill
+
+  beginPath
+  moveTo (x + 40.0) (y + 50.0)
+  lineTo (x + 35.0) (y + 60.0)
+  lineTo (x + 30.0) (y + 50.0)
+  closePath
+  fill
 
 renderScore :: Int -> ReaderT Context2D Effect Unit
 renderScore score = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "white"
-        fillText context ("Score: " <> show score) 20.0 590.0
-  pure unit
+  setFillStyle "white"
+  fillText ("Score: " <> show score) 20.0 590.0
 
 renderVictory :: Int -> ReaderT Context2D Effect Unit
 renderVictory score = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "white"
-        setFont context "64px sans-serif"
-        fillText context ("Victory!") 270.0 280.0
-        fillText context ("Final Score: " <> show score) 150.0 350.0
-  pure unit
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("Victory!") 270.0 280.0
+  fillText ("Final Score: " <> show score) 150.0 350.0
 
 renderLoss :: Int -> ReaderT Context2D Effect Unit
 renderLoss score = do
-  context <- ask
-  lift
-    $ withContext context do
-        setFillStyle context "white"
-        setFont context "64px sans-serif"
-        fillText context ("You died!") 240.0 280.0
-        fillText context ("Final Score: " <> show score) 150.0 350.0
-  pure unit
-
-renderEllipse :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
-renderEllipse context x y width height =
-  let
-    widthOver2 = width / 2.0
-
-    widthTwoThirds = width * 2.0 / 3.0
-
-    heightOver2 = height / 2.0
-  in
-    fillPath context do
-      moveTo context x (y - heightOver2)
-      bezierCurveTo context { cp1x: x + widthTwoThirds, cp1y: y - heightOver2, cp2x: x + widthTwoThirds, cp2y: y + heightOver2, x, y: y + heightOver2 }
-      bezierCurveTo context { cp1x: x - widthTwoThirds, cp1y: y + heightOver2, cp2x: x - widthTwoThirds, cp2y: y - heightOver2, x, y: y - heightOver2 }
-      closePath context
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("You died!") 240.0 280.0
+  fillText ("Final Score: " <> show score) 150.0 350.0
 
 ----------
 -- Main --
