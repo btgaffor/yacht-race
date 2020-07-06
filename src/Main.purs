@@ -10,7 +10,7 @@ import Data.Maybe (Maybe(..))
 import Data.Traversable (for, traverse_)
 import Data.Tuple.Nested ((/\))
 import Ecs (Entity(..), Not(..), SystemT, cfold, cfoldMap, cmap, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
-import EcsCanvas (arc, beginPath, closePath, fill, fillText, lineTo, moveTo, rect, renderEllipse, setFillStyle, setFont)
+import EcsCanvas (arc, closePath, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, setFillStyle, setFont, withContext)
 import EcsGameLoop (GameSetup, RenderFrame, StepFrame, StepFrameKeys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
 import Effect.Random (randomInt, randomRange)
@@ -254,100 +254,98 @@ renderFrame = do
         renderScore score
       Won -> renderVictory score
       Lost -> renderLoss score
-
   pure $ \context -> runReaderT render context
 
 renderWaiting :: Int -> ReaderT Context2D Effect Unit
 renderWaiting level = do
-  setFillStyle "white"
-  setFont "64px sans-serif"
-  fillText ("Level: " <> show level) 260.0 256.0
-  fillText "Press any key" 180.0 320.0
-  fillText "to start." 270.0 384.0
+  withContext do
+    setFillStyle "white"
+    setFont "64px sans-serif"
+    fillText ("Level: " <> show level) 260.0 256.0
+    fillText "Press any key" 180.0 320.0
+    fillText "to start." 270.0 384.0
 
 renderMissile :: Position -> ReaderT Context2D Effect Unit
 renderMissile (Position { x, y }) = do
-  setFillStyle "gray"
-  arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-  fill
+  withContext do
+    setFillStyle "gray"
+    fillPath $ arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
+    fillPath $ rect { x, y: y + 5.0, width: 10.0, height: 10.0 }
 
-  rect { x, y: y + 5.0, width: 10.0, height: 10.0 }
-  fill
-
-  setFillStyle "red"
-  beginPath
-  moveTo (x + 8.0) (y + 15.0)
-  lineTo (x + 5.0) (y + 21.0)
-  lineTo (x + 2.0) (y + 15.0)
-  closePath
-  fill
+    setFillStyle "red"
+    fillPath do
+      moveTo (x + 8.0) (y + 15.0)
+      lineTo (x + 5.0) (y + 21.0)
+      lineTo (x + 2.0) (y + 15.0)
+      closePath
 
 renderBomb :: Position -> ReaderT Context2D Effect Unit
 renderBomb (Position { x, y }) = do
   setFillStyle "gray"
-  arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-  fill
+  fillPath $ arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
 
 renderAlien :: Position -> ReaderT Context2D Effect Unit
 renderAlien (Position { x, y }) = do
-  setFillStyle "green"
-  renderEllipse (x + 25.0) (y + 20.0) 40.0 20.0
-  renderEllipse (x + 5.0) (y + 25.0) 10.0 30.0
-  renderEllipse (x + 45.0) (y + 25.0) 10.0 30.0
-  renderEllipse (x + 25.0) (y + 25.0) 20.0 50.0
-  setFillStyle "lightgray"
-  renderEllipse (x + 25.0) (y + 35.0) 5.0 10.0
+  withContext do
+    setFillStyle "green"
+    renderEllipse (x + 25.0) (y + 20.0) 40.0 20.0
+    renderEllipse (x + 5.0) (y + 25.0) 10.0 30.0
+    renderEllipse (x + 45.0) (y + 25.0) 10.0 30.0
+    renderEllipse (x + 25.0) (y + 25.0) 20.0 50.0
+    setFillStyle "lightgray"
+    renderEllipse (x + 25.0) (y + 35.0) 5.0 10.0
 
 renderParticle :: Position -> ReaderT Context2D Effect Unit
 renderParticle (Position { x, y }) = do
-  setFillStyle "orange"
-  arc { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
-  fill
+  withContext do
+    setFillStyle "orange"
+    fillPath $ arc { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
 
 renderPlayer :: Position -> ReaderT Context2D Effect Unit
 renderPlayer (Position { x, y }) = do
-  setFillStyle "lightgray"
+  withContext do
+    setFillStyle "lightgray"
 
-  beginPath
-  moveTo (x + 25.0) y
-  lineTo (x + 50.0) (y + 50.0)
-  lineTo x (y + 50.0)
-  closePath
-  fill
+    fillPath do
+      moveTo (x + 25.0) y
+      lineTo (x + 50.0) (y + 50.0)
+      lineTo x (y + 50.0)
+      closePath
 
-  setFillStyle "red"
-  beginPath
-  moveTo (x + 20.0) (y + 50.0)
-  lineTo (x + 15.0) (y + 60.0)
-  lineTo (x + 10.0) (y + 50.0)
-  closePath
-  fill
+    setFillStyle "red"
+    fillPath do
+      moveTo (x + 20.0) (y + 50.0)
+      lineTo (x + 15.0) (y + 60.0)
+      lineTo (x + 10.0) (y + 50.0)
+      closePath
 
-  beginPath
-  moveTo (x + 40.0) (y + 50.0)
-  lineTo (x + 35.0) (y + 60.0)
-  lineTo (x + 30.0) (y + 50.0)
-  closePath
-  fill
+    fillPath do
+      moveTo (x + 40.0) (y + 50.0)
+      lineTo (x + 35.0) (y + 60.0)
+      lineTo (x + 30.0) (y + 50.0)
+      closePath
 
 renderScore :: Int -> ReaderT Context2D Effect Unit
 renderScore score = do
-  setFillStyle "white"
-  fillText ("Score: " <> show score) 20.0 590.0
+  withContext do
+    setFillStyle "white"
+    fillText ("Score: " <> show score) 20.0 590.0
 
 renderVictory :: Int -> ReaderT Context2D Effect Unit
 renderVictory score = do
-  setFillStyle "white"
-  setFont "64px sans-serif"
-  fillText ("Victory!") 270.0 280.0
-  fillText ("Final Score: " <> show score) 150.0 350.0
+  withContext do
+    setFillStyle "white"
+    setFont "64px sans-serif"
+    fillText ("Victory!") 270.0 280.0
+    fillText ("Final Score: " <> show score) 150.0 350.0
 
 renderLoss :: Int -> ReaderT Context2D Effect Unit
 renderLoss score = do
-  setFillStyle "white"
-  setFont "64px sans-serif"
-  fillText ("You died!") 240.0 280.0
-  fillText ("Final Score: " <> show score) 150.0 350.0
+  withContext do
+    setFillStyle "white"
+    setFont "64px sans-serif"
+    fillText ("You died!") 240.0 280.0
+    fillText ("Final Score: " <> show score) 150.0 350.0
 
 ----------
 -- Main --
