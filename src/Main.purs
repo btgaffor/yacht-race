@@ -2,6 +2,7 @@ module Main where
 
 import Prelude
 
+import Control.Monad (liftM1)
 import Control.Monad.Reader (ReaderT, lift, runReaderT)
 import Data.Array (range)
 import Data.Either (Either(..))
@@ -10,7 +11,7 @@ import Data.Maybe (Maybe(..))
 import Data.Traversable (for, traverse_)
 import Data.Tuple.Nested ((/\))
 import Ecs (Entity(..), Not(..), SystemT, cfold, cfoldMap, cmap, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
-import EcsCanvas (arc, closePath, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, setFillStyle, setFont, withContext)
+import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont)
 import EcsGameLoop (GameSetup, RenderFrame, StepFrame, StepFrameKeys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
 import Effect.Random (randomInt, randomRange)
@@ -20,14 +21,17 @@ import Math (cos, pi, pow, sin, sqrt)
 import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, bombComponents, initWorld, missileComponents, particleComponents)
 
 generateRandomBombTimeout :: Effect Int
-generateRandomBombTimeout = randomInt 25 300
+generateRandomBombTimeout = randomInt 25 1200
+
+timeDelta :: Number -> Number
+timeDelta value = value * 60.0 / 1000.0
 
 gameSetup :: GameSetup World
 gameSetup = do
   void $ newEntity $ Player
     /\ Position { x: 375.0, y: 520.0 }
     /\ Velocity { vx: 5.0, vy: 0.0 }
-    /\ Collision { width: 50.0, height: 50.0 }
+    /\ Collision { width: 30.0, height: 40.0 }
     /\ MissileTimer 0
   createEnemies
 
@@ -44,12 +48,12 @@ createEnemies = do
                 /\ Accelerate
                 /\ Position { x, y }
                 /\ Velocity { vx: 2.0, vy: 0.0 }
-                /\ Collision { width: 50.0, height: 50.0 }
+                /\ Collision { width: 30.0, height: 30.0 }
                 /\ MissileTimer t
           )
-          [ 20.0, 100.0, 180.0, 260.0, 340.0, 420.0, 500.0 ]
+          [ 12.0, 60.0, 108.0, 156.0, 204.0, 252.0, 300.0, 348.0, 396.0, 444.0, 492.0 ]
     )
-    [ 20.0, 100.0 ]
+    [ 22.0, 70.0, 118.0, 166.0, 214.0, 262.0 ]
 
 ---------------
 -- StepFrame --
@@ -86,7 +90,8 @@ waitForSpace keysRef = do
       GameState state
 
 decrementMissileTimers :: SystemT World Effect Unit
-decrementMissileTimers = cmap $ \(MissileTimer t) -> MissileTimer (t - 1)
+decrementMissileTimers = do
+  cmap $ \(MissileTimer t) -> MissileTimer (t - 1)
 
 movePlayer :: StepFrameKeys World
 movePlayer keysRef = do
@@ -104,9 +109,9 @@ playerShootMissile keysRef = do
       when (t <= 0) do
         void $ newEntity
           $ Missile
-          /\ Position { x: x + 20.0, y }
+          /\ Position { x: x + 12.0, y }
           /\ Velocity { vx: 0.0, vy: -10.0 }
-          /\ Collision { width: 10.0, height: 15.0 }
+          /\ Collision { width: 6.0, height: 9.0 }
         cmap $ \(Player /\ MissileTimer _) -> MissileTimer 15
 
 aliensDropBombs :: StepFrame World
@@ -116,9 +121,9 @@ aliensDropBombs = do
       void $ newEntity
         $ Bomb
         /\ Accelerate
-        /\ Position { x: x + 20.0, y: y + 30.0 }
+        /\ Position { x: x + 12.0, y: y + 24.0 }
         /\ Velocity { vx: 0.0, vy: 10.0 }
-        /\ Collision { width: 10.0, height: 10.0 }
+        /\ Collision { width: 6.0, height: 6.0 }
       newTimer <- lift $ generateRandomBombTimeout
       set e (MissileTimer newTimer)
 
@@ -126,9 +131,11 @@ moveNotPlayers :: StepFrame World
 moveNotPlayers = do
   cmap $ \(Position { x, y } /\ Velocity { vx, vy } /\ (Not :: Not Player) /\ (Not :: Not Accelerate)) -> Position { x: x + vx, y: y + vy }
   Level level <- get (Entity global)
-  let multiplier = pow 1.1 (toNumber (level - 1))
-  cmap $ \(Position { x, y } /\ Velocity { vx, vy } /\ Accelerate) ->
-    Position { x: x + (vx * multiplier), y: y + (vy * multiplier) }
+  let
+    multiplier = pow 1.1 (toNumber (level - 1))
+  cmap
+    $ \(Position { x, y } /\ Velocity { vx, vy } /\ Accelerate) ->
+        Position { x: x + (vx * multiplier), y: y + (vy * multiplier) }
 
 slowParticles :: SystemT World Effect Unit
 slowParticles = do
@@ -176,7 +183,7 @@ generateAlienParticles (Position { x, y }) = do
           vx = 3.0 * cos (angle)
 
           vy = 3.0 * sin (angle)
-        void $ newEntity $ Particle /\ Position { x: x + 25.0, y: y + 25.0 } /\ Velocity { vx, vy }
+        void $ newEntity $ Particle /\ Position { x: x + 15.0, y: y + 15.0 } /\ Velocity { vx, vy }
 
 checkBombCollisions :: StepFrame World
 checkBombCollisions =
@@ -236,119 +243,118 @@ renderFrame = do
   GameState state <- get (Entity global)
   Score score <- get (Entity global)
   Level level <- get (Entity global)
-
-  renderMissiles <- cfoldMap $ \(Missile /\ (p :: Position)) -> renderMissile p
-  renderBombs <- cfoldMap $ \(Bomb /\ (p :: Position)) -> renderBomb p
-  renderAliens <- cfoldMap $ \(Alien /\ (p :: Position)) -> renderAlien p
-  renderParticles <- cfoldMap $ \(Particle /\ (p :: Position)) -> renderParticle p
-  renderPlayers <- cfoldMap $ \(Player /\ (p :: Position)) -> renderPlayer p
+  renderMissiles <- cfoldMap $ \(Missile /\ Position { x, y }) -> renderFromCanvas "missile" x y
+  renderPlayers <- cfoldMap $ \(Player /\ Position { x, y }) -> renderFromCanvas "player" x y
+  renderBombs <- cfoldMap $ \(Bomb /\ Position { x, y }) -> renderFromCanvas "bomb" x y
+  renderAliens <- cfoldMap $ \(Alien /\ Position { x, y }) -> renderFromCanvas "alien" x y
+  renderParticles <- cfoldMap $ \(Particle /\ Position { x, y }) -> renderFromCanvas "particle" x y
   let
     render = case state of
       Waiting -> renderWaiting level
       Running -> do
         renderMissiles
-        renderBombs
-        renderAliens
-        renderParticles
         renderPlayers
+        renderAliens
+        renderBombs
+        renderParticles
         renderScore score
       Won -> renderVictory score
       Lost -> renderLoss score
   pure $ \context -> runReaderT render context
 
+preRenderPlayer :: Effect Unit
+preRenderPlayer =
+  createPrerenderCanvas "player" "30px" "40px" do
+    setFillStyle "lightgray"
+    fillPath do
+      moveTo 15.0 0.0
+      lineTo 30.0 35.0
+      lineTo 0.0 35.0
+      closePath
+    setFillStyle "red"
+    fillPath do
+      moveTo 10.0 35.0
+      lineTo 7.5 40.0
+      lineTo 5.0 35.0
+      closePath
+    fillPath do
+      moveTo 25.0 35.0
+      lineTo 22.5 40.0
+      lineTo 20.0 35.0
+      closePath
+
+preRenderMissile :: Effect Unit
+preRenderMissile =
+  createPrerenderCanvas "missile" "6px" "9px" do
+    setFillStyle "gray"
+    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
+    fillPath $ rect { x: 0.0, y: 3.0, width: 6.0, height: 6.0 }
+    setFillStyle "red"
+    fillPath do
+      moveTo 5.0 9.0
+      lineTo 3.0 13.0
+      lineTo 1.0 9.0
+      closePath
+
+preRenderAlien :: Effect Unit
+preRenderAlien =
+  createPrerenderCanvas "alien" "30px" "30px" do
+    setFillStyle "green"
+    renderEllipse 15.0 12.0 24.0 12.0 -- horizontal body
+    renderEllipse 3.0 15.0 6.0 18.0 -- left wing
+    renderEllipse 27.0 15.0 6.0 18.0 -- right wing
+    renderEllipse 15.0 15.0 12.0 30.0 -- vertical body
+    setFillStyle "lightgray"
+    renderEllipse 15.0 21.0 3.0 6.0 -- cockpit
+
+preRenderBomb :: Effect Unit
+preRenderBomb =
+  createPrerenderCanvas "bomb" "6px" "6px" do
+    setFillStyle "gray"
+    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
+
+preRenderParticle :: Effect Unit
+preRenderParticle =
+  createPrerenderCanvas "particle" "6px" "6px" do
+    setFillStyle "orange"
+    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
+
 renderWaiting :: Int -> ReaderT Context2D Effect Unit
 renderWaiting level = do
-  withContext do
-    setFillStyle "white"
-    setFont "64px sans-serif"
-    fillText ("Level: " <> show level) 260.0 256.0
-    fillText "Press any key" 180.0 320.0
-    fillText "to start." 270.0 384.0
-
-renderMissile :: Position -> ReaderT Context2D Effect Unit
-renderMissile (Position { x, y }) = do
-  withContext do
-    setFillStyle "gray"
-    fillPath $ arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-    fillPath $ rect { x, y: y + 5.0, width: 10.0, height: 10.0 }
-
-    setFillStyle "red"
-    fillPath do
-      moveTo (x + 8.0) (y + 15.0)
-      lineTo (x + 5.0) (y + 21.0)
-      lineTo (x + 2.0) (y + 15.0)
-      closePath
-
-renderBomb :: Position -> ReaderT Context2D Effect Unit
-renderBomb (Position { x, y }) = do
-  setFillStyle "gray"
-  fillPath $ arc { x: x + 5.0, y: y + 5.0, radius: 5.0, start: 0.0, end: 365.0 }
-
-renderAlien :: Position -> ReaderT Context2D Effect Unit
-renderAlien (Position { x, y }) = do
-  withContext do
-    setFillStyle "green"
-    renderEllipse (x + 25.0) (y + 20.0) 40.0 20.0
-    renderEllipse (x + 5.0) (y + 25.0) 10.0 30.0
-    renderEllipse (x + 45.0) (y + 25.0) 10.0 30.0
-    renderEllipse (x + 25.0) (y + 25.0) 20.0 50.0
-    setFillStyle "lightgray"
-    renderEllipse (x + 25.0) (y + 35.0) 5.0 10.0
-
-renderParticle :: Position -> ReaderT Context2D Effect Unit
-renderParticle (Position { x, y }) = do
-  withContext do
-    setFillStyle "orange"
-    fillPath $ arc { x: x - 2.0, y: y - 2.0, radius: 4.0, start: 0.0, end: 365.0 }
-
-renderPlayer :: Position -> ReaderT Context2D Effect Unit
-renderPlayer (Position { x, y }) = do
-  withContext do
-    setFillStyle "lightgray"
-
-    fillPath do
-      moveTo (x + 25.0) y
-      lineTo (x + 50.0) (y + 50.0)
-      lineTo x (y + 50.0)
-      closePath
-
-    setFillStyle "red"
-    fillPath do
-      moveTo (x + 20.0) (y + 50.0)
-      lineTo (x + 15.0) (y + 60.0)
-      lineTo (x + 10.0) (y + 50.0)
-      closePath
-
-    fillPath do
-      moveTo (x + 40.0) (y + 50.0)
-      lineTo (x + 35.0) (y + 60.0)
-      lineTo (x + 30.0) (y + 50.0)
-      closePath
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("Level: " <> show level) 260.0 256.0
+  fillText "Press any key" 180.0 320.0
+  fillText "to start." 270.0 384.0
 
 renderScore :: Int -> ReaderT Context2D Effect Unit
 renderScore score = do
-  withContext do
-    setFillStyle "white"
-    fillText ("Score: " <> show score) 20.0 590.0
+  setFillStyle "white"
+  setFont "12px sans-serif"
+  fillText ("Score: " <> show score) 20.0 590.0
 
 renderVictory :: Int -> ReaderT Context2D Effect Unit
 renderVictory score = do
-  withContext do
-    setFillStyle "white"
-    setFont "64px sans-serif"
-    fillText ("Victory!") 270.0 280.0
-    fillText ("Final Score: " <> show score) 150.0 350.0
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("Victory!") 270.0 280.0
+  fillText ("Final Score: " <> show score) 150.0 350.0
 
 renderLoss :: Int -> ReaderT Context2D Effect Unit
 renderLoss score = do
-  withContext do
-    setFillStyle "white"
-    setFont "64px sans-serif"
-    fillText ("You died!") 240.0 280.0
-    fillText ("Final Score: " <> show score) 150.0 350.0
+  setFillStyle "white"
+  setFont "64px sans-serif"
+  fillText ("You died!") 240.0 280.0
+  fillText ("Final Score: " <> show score) 150.0 350.0
 
 ----------
 -- Main --
 ----------
 main :: Effect Unit
-main = runGameEngine initWorld gameSetup gameFrame renderFrame
+main = do
+  preRenderPlayer
+  preRenderMissile
+  preRenderAlien
+  preRenderBomb
+  preRenderParticle
+  runGameEngine initWorld gameSetup gameFrame renderFrame

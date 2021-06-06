@@ -2,38 +2,55 @@ module Model where
 
 import Prelude
 
-import Control.Monad.State (gets, modify_)
-import Data.Map (Map)
+import Control.Monad.State (gets)
 import Data.Tuple (Tuple)
-import Ecs (class GetStore, class SaveStore, Entity, EntityCount, Global(..), Unique, initStore)
+import Ecs (class GetStore, EntityCount, Global(..), Map, Unique, initStore)
 import Effect (Effect)
+import Effect.Ref (new)
 import Type.Prelude (Proxy(..))
 
-data Score = Score Int
+data Score
+  = Score Int
 
-data Level = Level Int
+data Level
+  = Level Int
 
-data GameStateValue = Waiting | Running | Won | Lost
+data GameStateValue
+  = Waiting
+  | Running
+  | Won
+  | Lost
+
 derive instance eqGameStateValue :: Eq GameStateValue
 
-data GameState = GameState GameStateValue
+data GameState
+  = GameState GameStateValue
 
 data Player
   = Player
 
-data Alien = Alien
+data Alien
+  = Alien
+
 alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
-data Missile = Missile
+data Missile
+  = Missile
+
 missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position (Tuple Velocity Collision)))
 
-data Bomb = Bomb
+data Bomb
+  = Bomb
+
 bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
-data Particle = Particle
+data Particle
+  = Particle
+
 particleComponents = Proxy :: Proxy (Tuple Particle (Tuple Position Velocity))
 
-data Accelerate = Accelerate
+data Accelerate
+  = Accelerate
 
 data Position
   = Position { x :: Number, y :: Number }
@@ -44,172 +61,104 @@ data Velocity
 data Collision
   = Collision { width :: Number, height :: Number }
 
-data MissileTimer = MissileTimer Int
+data MissileTimer
+  = MissileTimer Int
 
-type WorldInner =
-  { entityCounter :: Global EntityCount
-  , score :: Global Score
-  , level :: Global Level
-  , gameState :: Global GameState
-  , player :: Unique Player
-  , alien :: Map Entity Alien
-  , missile :: Map Entity Missile
-  , bomb :: Map Entity Bomb
-  , particle :: Map Entity Particle
-  , accelerate :: Map Entity Accelerate
-  , position :: Map Entity Position
-  , velocity :: Map Entity Velocity
-  , drawable :: Map Entity Collision
-  , missileTimer :: Map Entity MissileTimer
-  }
+type WorldInner
+  = { entityCounter :: Global EntityCount
+    , score :: Global Score
+    , level :: Global Level
+    , gameState :: Global GameState
+    , player :: Unique Player
+    , alien :: Map Alien
+    , missile :: Map Missile
+    , bomb :: Map Bomb
+    , particle :: Map Particle
+    , accelerate :: Map Accelerate
+    , position :: Map Position
+    , velocity :: Map Velocity
+    , drawable :: Map Collision
+    , missileTimer :: Map MissileTimer
+    }
 
-data World = World WorldInner
+data World
+  = World WorldInner
 
 unWorld :: World -> WorldInner
 unWorld (World world) = world
 
 initWorld :: Effect World
 initWorld = do
+  score <- Global <$> new (Score 0)
+  level <- Global <$> new (Level 1)
+  gameState <- Global <$> new (GameState Waiting)
+  entityCounter <- initStore
+  player <- initStore
+  alien <- initStore
+  missile <- initStore
+  bomb <- initStore
+  particle <- initStore
+  accelerate <- initStore
+  position <- initStore
+  velocity <- initStore
+  drawable <- initStore
+  missileTimer <- initStore
   pure
     $ World
-        { entityCounter: initStore
-        , score: Global (Score 0)
-        , level: Global (Level 1)
-        , gameState: Global (GameState Waiting)
-        , player: initStore
-        , alien: initStore
-        , missile: initStore
-        , bomb: initStore
-        , particle: initStore
-        , accelerate: initStore
-        , position: initStore
-        , velocity: initStore
-        , drawable: initStore
-        , missileTimer: initStore
+        { entityCounter
+        , score
+        , level
+        , gameState
+        , player
+        , alien
+        , missile
+        , bomb
+        , particle
+        , accelerate
+        , position
+        , velocity
+        , drawable
+        , missileTimer
         }
 
--------------------
--- EntityCounter --
--------------------
 instance hasEntityCounter :: GetStore World EntityCount (Global EntityCount) where
   getStore _ = gets (unWorld >>> _.entityCounter)
 
-instance saveStoreEntityCounter :: SaveStore World (Global EntityCount) where
-  saveStore value = modify_ (unWorld >>> _ { entityCounter = value } >>> World)
-
-------------
--- Player --
-------------
 instance hasPlayer :: GetStore World Player (Unique Player) where
   getStore _ = gets (unWorld >>> _.player)
 
-instance saveStorePlayer :: SaveStore World (Unique Player) where
-  saveStore value = modify_ (unWorld >>> _ { player = value } >>> World)
-
------------
--- Alien --
------------
-instance hasAlien :: GetStore World Alien (Map Entity Alien) where
+instance hasAlien :: GetStore World Alien (Map Alien) where
   getStore _ = gets (unWorld >>> _.alien)
 
-instance saveStoreAlien :: SaveStore World (Map Entity Alien) where
-  saveStore value = modify_ (unWorld >>> _ { alien = value } >>> World)
-
--------------
--- Missile --
--------------
-instance hasMissile :: GetStore World Missile (Map Entity Missile) where
+instance hasMissile :: GetStore World Missile (Map Missile) where
   getStore _ = gets (unWorld >>> _.missile)
 
-instance saveStoreMissile :: SaveStore World (Map Entity Missile) where
-  saveStore value = modify_ (unWorld >>> _ { missile = value } >>> World)
-
-----------
--- Bomb --
-----------
-instance hasBomb :: GetStore World Bomb (Map Entity Bomb) where
+instance hasBomb :: GetStore World Bomb (Map Bomb) where
   getStore _ = gets (unWorld >>> _.bomb)
 
-instance saveStoreBomb :: SaveStore World (Map Entity Bomb) where
-  saveStore value = modify_ (unWorld >>> _ { bomb = value } >>> World)
-
---------------
--- Particle --
---------------
-instance hasParticle :: GetStore World Particle (Map Entity Particle) where
+instance hasParticle :: GetStore World Particle (Map Particle) where
   getStore _ = gets (unWorld >>> _.particle)
 
-instance saveStoreParticle :: SaveStore World (Map Entity Particle) where
-  saveStore value = modify_ (unWorld >>> _ { particle = value } >>> World)
-
---------------
--- Accelerate --
---------------
-instance hasAccelerate :: GetStore World Accelerate (Map Entity Accelerate) where
+instance hasAccelerate :: GetStore World Accelerate (Map Accelerate) where
   getStore _ = gets (unWorld >>> _.accelerate)
 
-instance saveStoreAccelerate :: SaveStore World (Map Entity Accelerate) where
-  saveStore value = modify_ (unWorld >>> _ { accelerate = value } >>> World)
-
---------------
--- Position --
---------------
-instance getStorePosition :: GetStore World Position (Map Entity Position) where
+instance getStorePosition :: GetStore World Position (Map Position) where
   getStore _ = gets (unWorld >>> _.position)
 
-instance saveStorePosition :: SaveStore World (Map Entity Position) where
-  saveStore value = modify_ (unWorld >>> _ { position = value } >>> World)
-
---------------
--- Velocity --
---------------
-instance getStoreVelocity :: GetStore World Velocity (Map Entity Velocity) where
+instance getStoreVelocity :: GetStore World Velocity (Map Velocity) where
   getStore _ = gets (unWorld >>> _.velocity)
 
-instance saveStoreVelocity :: SaveStore World (Map Entity Velocity) where
-  saveStore value = modify_ (unWorld >>> _ { velocity = value } >>> World)
-
----------------
--- Collision --
----------------
-instance getStoreCollision :: GetStore World Collision (Map Entity Collision) where
+instance getStoreCollision :: GetStore World Collision (Map Collision) where
   getStore _ = gets (unWorld >>> _.drawable)
 
-instance saveStoreCollision :: SaveStore World (Map Entity Collision) where
-  saveStore value = modify_ (unWorld >>> _ { drawable = value } >>> World)
-
-------------------
--- MissileTimer --
-------------------
-instance getStoreMissileTimer :: GetStore World MissileTimer (Map Entity MissileTimer) where
+instance getStoreMissileTimer :: GetStore World MissileTimer (Map MissileTimer) where
   getStore _ = gets (unWorld >>> _.missileTimer)
 
-instance saveStoreMissileTimer :: SaveStore World (Map Entity MissileTimer) where
-  saveStore value = modify_ (unWorld >>> _ { missileTimer = value } >>> World)
-
------------
--- Score --
------------
 instance getStoreScore :: GetStore World Score (Global Score) where
   getStore _ = gets (unWorld >>> _.score)
 
-instance saveStoreScore :: SaveStore World (Global Score) where
-  saveStore value = modify_ (unWorld >>> _ { score = value } >>> World)
-
------------
--- Level --
------------
 instance getStoreLevel :: GetStore World Level (Global Level) where
   getStore _ = gets (unWorld >>> _.level)
 
-instance saveStoreLevel :: SaveStore World (Global Level) where
-  saveStore value = modify_ (unWorld >>> _ { level = value } >>> World)
-
----------------
--- GameState --
----------------
 instance getStoreGameState :: GetStore World GameState (Global GameState) where
   getStore _ = gets (unWorld >>> _.gameState)
-
-instance saveStoreGameState :: SaveStore World (Global GameState) where
-  saveStore value = modify_ (unWorld >>> _ { gameState = value } >>> World)
