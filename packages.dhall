@@ -116,14 +116,10 @@ let additions =
   }
 -------------------------------
 -}
-
-
 let upstream =
-      https://github.com/purescript/package-sets/releases/download/psc-0.13.6-20200507/packages.dhall sha256:9c1e8951e721b79de1de551f31ecb5a339e82bbd43300eb5ccfb1bf8cf7bbd62
+      https://github.com/purescript/package-sets/releases/download/psc-0.14.5-20220203/packages.dhall sha256:f8905bf5d7ce9d886cf4ef1c5893ab55de0b30c82c2b4137f272d075000fbc50
 
-let overrides =
-    { purescript-ecs = ../purescript-ecs/spago.dhall as Location
-    }
+let overrides = { purescript-ecs = ../purescript-ecs/spago.dhall as Location }
 
 let additions = {=}
 
