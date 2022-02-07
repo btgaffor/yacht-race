@@ -2,7 +2,6 @@ module Main where
 
 import Prelude
 
-import Control.Monad (liftM1)
 import Control.Monad.Reader (ReaderT, lift, runReaderT)
 import Data.Array (range)
 import Data.Either (Either(..))
@@ -37,7 +36,6 @@ gameSetup = do
 
 createEnemies :: GameSetup World
 createEnemies = do
-  Level level <- get (Entity global)
   traverse_
     ( \y ->
         traverse_
@@ -97,9 +95,9 @@ movePlayer :: StepFrameKeys World
 movePlayer keysRef = do
   keys <- lift $ read keysRef
   when keys.arrowLeft do
-    cmap $ \(Player /\ Position { x, y } /\ Velocity { vx, vy }) -> Position { x: x - vx, y }
+    cmap $ \(Player /\ Position { x, y } /\ Velocity { vx }) -> Position { x: x - vx, y }
   when keys.arrowRight do
-    cmap $ \(Player /\ Position { x, y } /\ Velocity { vx, vy }) -> Position { x: x + vx, y }
+    cmap $ \(Player /\ Position { x, y } /\ Velocity { vx }) -> Position { x: x + vx, y }
 
 playerShootMissile :: StepFrameKeys World
 playerShootMissile keysRef = do
@@ -150,7 +148,7 @@ bounceAliens :: StepFrame World
 bounceAliens = do
   shouldBounce <-
     cfold
-      ( \accumulator (Alien /\ Position { x, y } /\ Collision { width, height }) ->
+      ( \accumulator (Alien /\ Position { x } /\ Collision { width }) ->
           accumulator || x <= 0.0 || x + width >= canvasWidth
       )
       false
@@ -177,7 +175,7 @@ generateAlienParticles :: Position -> SystemT World Effect Unit
 generateAlienParticles (Position { x, y }) = do
   numParticles <- lift $ randomInt 3 5
   void
-    $ for (range 1 numParticles) \n -> do
+    $ for (range 1 numParticles) \_ -> do
         angle <- lift $ randomRange 0.0 (2.0 * pi)
         let
           vx = 3.0 * cos (angle)
@@ -189,9 +187,9 @@ checkBombCollisions :: StepFrame World
 checkBombCollisions =
   do
     cmapM_
-    $ \(Player /\ (ePlayer :: Entity) /\ (playerP :: Position) /\ (playerC :: Collision)) -> do
+    $ \(Player /\ (playerP :: Position) /\ (playerC :: Collision)) -> do
         cmapM_
-          $ \(Bomb /\ (eBomb :: Entity) /\ (bombP :: Position) /\ (bombC :: Collision)) -> do
+          $ \(Bomb /\ (bombP :: Position) /\ (bombC :: Collision)) -> do
               when (overlaps playerP playerC bombP bombC) do
                 modifyGlobal $ \(GameState _) -> GameState Lost
 
@@ -220,8 +218,8 @@ overlaps (Position p1) (Collision d1) (Position p2) (Collision d2) =
 penalizeMissedMissiles :: StepFrame World
 penalizeMissedMissiles =
   cmap
-    $ \all@(Missile /\ Position { x, y } /\ Collision { width, height } /\ Velocity _ /\ Score score) ->
-        if (x < 0.0) || (x > canvasWidth - width) || (y < 0.0) || (y > 600.0 - width) then
+    $ \(Missile /\ Position { x, y } /\ Collision { width, height } /\ Velocity _ /\ Score score) ->
+        if (x < 0.0) || (x > canvasWidth - width) || (y < 0.0) || (y > 600.0 - height) then
           Right (Score (score - 10))
         else
           Left unit
