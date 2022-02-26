@@ -2,9 +2,10 @@ module Model where
 
 import Prelude
 
-import Control.Monad.State (gets)
+import Control.Monad.Reader (asks)
 import Data.Tuple (Tuple)
-import Ecs (class GetStore, EntityCount, Global(..), Map, Unique, initStore)
+import Data.Tuple.Nested ((/\))
+import Ecs (class GetStore, EntityCount, Global(..), Map, Not(..), Unique, initStore)
 import Effect (Effect)
 import Effect.Ref (new)
 import Type.Prelude (Proxy(..))
@@ -34,20 +35,32 @@ data Alien
 
 alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
+notAlienComponents :: Tuple (Not Alien) (Tuple (Not Position) (Tuple (Not Velocity) (Tuple (Not Collision) (Not Accelerate))))
+notAlienComponents = (Not :: Not Alien) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision) /\ (Not :: Not Accelerate)
+
 data Missile
   = Missile
 
 missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position (Tuple Velocity Collision)))
+
+notMissileComponents :: Tuple (Not Missile) (Tuple (Not Position) (Tuple (Not Velocity) (Not Collision)))
+notMissileComponents = (Not :: Not Missile) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision)
 
 data Bomb
   = Bomb
 
 bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
 
+notBombComponents :: Tuple (Not Bomb) (Tuple (Not Position) (Tuple (Not Velocity) (Tuple (Not Collision) (Not Accelerate))))
+notBombComponents = (Not :: Not Bomb) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision) /\ (Not :: Not Accelerate)
+
 data Particle
   = Particle
 
 particleComponents = Proxy :: Proxy (Tuple Particle (Tuple Position Velocity))
+
+notParticalComponents :: Tuple (Not Particle) (Tuple (Not Position) (Not Velocity))
+notParticalComponents = (Not :: Not Particle) /\ (Not :: Not Position) /\ (Not :: Not Velocity)
 
 data Accelerate
   = Accelerate
@@ -122,43 +135,43 @@ initWorld = do
         }
 
 instance hasEntityCounter :: GetStore World EntityCount (Global EntityCount) where
-  getStore _ = gets (unWorld >>> _.entityCounter)
+  getStore _ = asks (unWorld >>> _.entityCounter)
 
 instance hasPlayer :: GetStore World Player (Unique Player) where
-  getStore _ = gets (unWorld >>> _.player)
+  getStore _ = asks (unWorld >>> _.player)
 
 instance hasAlien :: GetStore World Alien (Map Alien) where
-  getStore _ = gets (unWorld >>> _.alien)
+  getStore _ = asks (unWorld >>> _.alien)
 
 instance hasMissile :: GetStore World Missile (Map Missile) where
-  getStore _ = gets (unWorld >>> _.missile)
+  getStore _ = asks (unWorld >>> _.missile)
 
 instance hasBomb :: GetStore World Bomb (Map Bomb) where
-  getStore _ = gets (unWorld >>> _.bomb)
+  getStore _ = asks (unWorld >>> _.bomb)
 
 instance hasParticle :: GetStore World Particle (Map Particle) where
-  getStore _ = gets (unWorld >>> _.particle)
+  getStore _ = asks (unWorld >>> _.particle)
 
 instance hasAccelerate :: GetStore World Accelerate (Map Accelerate) where
-  getStore _ = gets (unWorld >>> _.accelerate)
+  getStore _ = asks (unWorld >>> _.accelerate)
 
 instance getStorePosition :: GetStore World Position (Map Position) where
-  getStore _ = gets (unWorld >>> _.position)
+  getStore _ = asks (unWorld >>> _.position)
 
 instance getStoreVelocity :: GetStore World Velocity (Map Velocity) where
-  getStore _ = gets (unWorld >>> _.velocity)
+  getStore _ = asks (unWorld >>> _.velocity)
 
 instance getStoreCollision :: GetStore World Collision (Map Collision) where
-  getStore _ = gets (unWorld >>> _.drawable)
+  getStore _ = asks (unWorld >>> _.drawable)
 
 instance getStoreMissileTimer :: GetStore World MissileTimer (Map MissileTimer) where
-  getStore _ = gets (unWorld >>> _.missileTimer)
+  getStore _ = asks (unWorld >>> _.missileTimer)
 
 instance getStoreScore :: GetStore World Score (Global Score) where
-  getStore _ = gets (unWorld >>> _.score)
+  getStore _ = asks (unWorld >>> _.score)
 
 instance getStoreLevel :: GetStore World Level (Global Level) where
-  getStore _ = gets (unWorld >>> _.level)
+  getStore _ = asks (unWorld >>> _.level)
 
 instance getStoreGameState :: GetStore World GameState (Global GameState) where
-  getStore _ = gets (unWorld >>> _.gameState)
+  getStore _ = asks (unWorld >>> _.gameState)
