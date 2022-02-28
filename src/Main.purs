@@ -11,7 +11,7 @@ import Data.Lazy (defer)
 import Data.Maybe (Maybe(..))
 import Data.Traversable (for, traverse_)
 import Data.Tuple.Nested ((/\))
-import Ecs (class ExplGet, class ExplMembers, class GetStore, Entity(..), Map, Not(..), SystemT, cfold, cfoldMap, cmap, cmapExternal, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
+import Ecs (class ExplGet, class ExplMembers, class GetStore, Entity(..), Map, Not(..), SystemT, cfold, cfoldMap, cmap, cmapExternal, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
 import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont)
 import EcsGameLoop (GameSetup, RenderFrame, StepFrame, StepFrameKeys, StepFrameKeysStep, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
@@ -83,13 +83,13 @@ gameFrame keysRef = do
     Running ->
       [ decrementMissileTimers
       , movePlayer keysRef
-      -- , playerShootMissile keysRef
-      -- , aliensDropBombs
+      , playerShootMissile keysRef
+      , aliensDropBombs
       , moveNotPlayers
       , bounceAliens
       , slowParticles
       , clampPlayer
-      -- , checkMissileCollisions
+      , checkMissileCollisions
       -- , checkBombCollisions
       , checkForVictory keysRef
       , penalizeMissedMissiles
@@ -145,8 +145,8 @@ playerShootMissile keysRef = do
 
 aliensDropBombs :: StepFrame World
 aliensDropBombs = do
-  cmapM_ \(Alien /\ (e :: Entity) /\ Position { x, y } /\ MissileTimer t) -> do
-    when (t <= 0) do
+  cmapM \(Alien /\ Position { x, y } /\ MissileTimer t) -> do
+    if (t <= 0) then do
       void $ newEntity
         $ Bomb
         /\ Accelerate
@@ -154,7 +154,9 @@ aliensDropBombs = do
         /\ Velocity { vx: 0.0, vy: 8.0 }
         /\ Collision { width: 6.0, height: 6.0 }
       newTimer <- lift $ generateRandomBombTimeout
-      set e (MissileTimer newTimer)
+      pure $ Left $ MissileTimer newTimer
+    else
+      pure $ Right unit
 
 moveNotAccelerate :: StepFrame World
 moveNotAccelerate =
