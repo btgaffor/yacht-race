@@ -27,6 +27,7 @@ import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..),
 generateRandomBombTimeout :: Effect Int
 generateRandomBombTimeout = randomInt 25 1200
 
+-- TODO: either actually do this for a framerate other than 60, or remove
 timeDelta :: Number -> Number
 timeDelta value = value * 60.0 / 1000.0
 
@@ -58,6 +59,7 @@ createEnemies = do
     )
     [ 22.0, 70.0, 118.0, 166.0, 214.0, 262.0 ]
 
+-- TODO: use this instead of the old one
 createEnemiesNew :: GameSetup World
 createEnemiesNew = sequence_ do
   x <- [ 12.0, 60.0, 108.0, 156.0, 204.0, 252.0, 300.0, 348.0, 396.0, 444.0, 492.0 ]
@@ -179,12 +181,6 @@ slowParticles =
           Left notParticalComponents
         else
           Right (Velocity { vx: vx * 0.90, vy: vy * 0.90 })
-  -- cmapM_
-  --   $ \(Particle /\ (e :: Entity) /\ Velocity { vx, vy }) ->
-  --       if (sqrt (vx * vx + vy * vy) <= 0.1) then
-  --         destroy e particleComponents
-  --       else
-  --         set e (Velocity { vx: vx * 0.90, vy: vy * 0.90 })
 
 reverseAlienVelocity :: StepFrame World
 reverseAlienVelocity =
