@@ -2,27 +2,22 @@ module Main where
 
 import Prelude
 
-import Control.Monad.Reader (ReaderT(..), lift, runReaderT)
-import Data.Array (range, singleton)
+import Control.Monad.Reader (ReaderT, lift)
+import Data.Array (range)
 import Data.Either (Either(..))
 import Data.Foldable (sequence_)
 import Data.Int (toNumber)
-import Data.Lazy (defer)
-import Data.Maybe (Maybe(..))
-import Data.Traversable (for, traverse_)
+import Data.Traversable (for)
 import Data.Tuple.Nested ((/\))
-import Ecs (class ExplGet, class ExplMembers, class GetStore, Entity(..), Map, Not(..), SystemT, cfold, cfoldMap, cmap, cmapExternal, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
+import Ecs (Entity(..), Not(..), SystemT, cfold, cmap, cmapExternal, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set)
 import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont)
 import EcsGameLoop (GameSetup, RenderFrame, StepFrame, StepFrameKeys, StepFrameKeysStep, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
-import Effect.Console (log, logShow)
 import Effect.Random (randomInt, randomRange)
-import Effect.Ref (modify_, new, read)
-import Effect.Unsafe (unsafePerformEffect)
-import ForeignUtil (sequenceEffectArray)
+import Effect.Ref (modify_, read)
 import Graphics.Canvas (Context2D)
 import Math (cos, pi, pow, sin, sqrt)
-import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, bombComponents, initWorld, missileComponents, notBombComponents, notMissileComponents, notParticalComponents, particleComponents)
+import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), Velocity(..), World, alienComponents, initWorld, missileComponents, notBombComponents, notMissileComponents, notParticalComponents)
 
 generateRandomBombTimeout :: Effect Int
 generateRandomBombTimeout = randomInt 25 1200
@@ -41,27 +36,7 @@ gameSetup = do
   createEnemies
 
 createEnemies :: GameSetup World
-createEnemies = do
-  traverse_
-    ( \y ->
-        traverse_
-          ( \x -> do
-              t <- lift $ generateRandomBombTimeout
-              newEntity
-                $ Alien
-                /\ Accelerate
-                /\ Position { x, y }
-                /\ Velocity { vx: 2.0, vy: 0.0 }
-                /\ Collision { width: 30.0, height: 30.0 }
-                /\ MissileTimer t
-          )
-          [ 12.0, 60.0, 108.0, 156.0, 204.0, 252.0, 300.0, 348.0, 396.0, 444.0, 492.0 ]
-    )
-    [ 22.0, 70.0, 118.0, 166.0, 214.0, 262.0 ]
-
--- TODO: use this instead of the old one
-createEnemiesNew :: GameSetup World
-createEnemiesNew = sequence_ do
+createEnemies = sequence_ do
   x <- [ 12.0, 60.0, 108.0, 156.0, 204.0, 252.0, 300.0, 348.0, 396.0, 444.0, 492.0 ]
   y <- [ 22.0, 70.0, 118.0, 166.0, 214.0, 262.0 ]
   pure $ do
@@ -92,7 +67,7 @@ gameFrame keysRef = do
       , slowParticles
       , clampPlayer
       , checkMissileCollisions
-      -- , checkBombCollisions
+      , checkBombCollisions
       , checkForVictory keysRef
       , penalizeMissedMissiles
       , clearOffScreen
@@ -131,14 +106,9 @@ playerShootMissile :: StepFrameKeysStep World
 playerShootMissile keysRef = do
   keys <- lift $ read keysRef
   when keys.space do
-    -- cmap \(Player /\ MissileTimer t) ->
-    --   if (t <= 0) then
-    --     Left $ MissileTimer 15
-    --   else
-    --     Right unit
     cmapM_ \(Player /\ Position { x, y } /\ MissileTimer t) -> do
       when (t <= 0) do
-        _ <- newEntity
+        void $ newEntity
           $ Missile
           /\ Position { x: x + 12.0, y }
           /\ Velocity { vx: 0.0, vy: -10.0 }
@@ -160,13 +130,9 @@ aliensDropBombs = do
     else
       pure $ Right unit
 
-moveNotAccelerate :: StepFrame World
-moveNotAccelerate =
-  cmap $ \(Position { x, y } /\ (Not :: Not Player) /\ (Not :: Not Accelerate) /\ Velocity { vx, vy }) -> Position { x: x + vx, y: y + vy }
-
 moveNotPlayers :: StepFrame World
 moveNotPlayers = do
-  moveNotAccelerate
+  cmap $ \(Position { x, y } /\ (Not :: Not Player) /\ (Not :: Not Accelerate) /\ Velocity { vx, vy }) -> Position { x: x + vx, y: y + vy }
   Level level <- get (Entity global)
   let multiplier = pow 1.1 (toNumber (level - 1))
   cmap
@@ -176,7 +142,7 @@ moveNotPlayers = do
 slowParticles :: StepFrame World
 slowParticles =
   cmap
-    $ \(Particle /\ (e :: Entity) /\ Velocity { vx, vy }) ->
+    $ \(Particle /\ Velocity { vx, vy }) ->
         if (sqrt (vx * vx + vy * vy) <= 0.1) then
           Left notParticalComponents
         else
@@ -398,49 +364,11 @@ renderLoss score = do
 ----------
 -- Main --
 ----------
-mainOld :: Effect Unit
-mainOld = do
+main :: Effect Unit
+main = do
   preRenderPlayer
   preRenderMissile
   preRenderAlien
   preRenderBomb
   preRenderParticle
   runGameEngine initWorld gameSetup gameFrame renderFrame
-
-
-------------
--- Main 2 --
-------------
-
-gameSetup2 :: GameSetup World
-gameSetup2 = do
-  traverse_
-    (\_ -> newEntity $ MissileTimer 0)
-    (range 1 5000)
-  traverse_
-    (\_ -> newEntity $ MissileTimer 0)
-    (range 1 5000)
-
-doNothingWithPlayer :: Player -> Unit
-doNothingWithPlayer Player = unit
-
-precomputedMapPlayer :: SystemT World Effect Unit
-precomputedMapPlayer = cmap $ \Player -> unit
-
-precomputedMapMissleTimer :: SystemT World Effect Unit
-precomputedMapMissleTimer = cmap $ \(MissileTimer t) -> (MissileTimer (t + 1))
-
-gameFrame2 :: StepFrameKeys World
-gameFrame2 _ = do
-  GameState state <- get (Entity 0)
-  pure [precomputedMapMissleTimer]
-
-renderFrame2 :: RenderFrame World
-renderFrame2 = do
-  pure []
-  -- pure $ \context -> pure unit
-
-mainNew :: Effect Unit
-mainNew = runGameEngine initWorld gameSetup2 gameFrame renderFrame2
-
-main = mainOld
