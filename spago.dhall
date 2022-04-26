@@ -13,6 +13,7 @@ You can edit this file as you like.
   , "integers"
   , "math"
   , "maybe"
+  , "newtype"
   , "ordered-collections"
   , "prelude"
   , "psci-support"

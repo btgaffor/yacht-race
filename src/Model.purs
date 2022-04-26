@@ -2,13 +2,43 @@ module Model where
 
 import Prelude
 
-import Control.Monad.Reader (asks)
+import Control.Monad.Reader.Class (class MonadAsk, ask)
+import Data.Newtype (class Newtype, unwrap)
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
-import Ecs (class GetStore, EntityCount, Global(..), Map, Not(..), Unique, initStore)
+import Ecs (class Store, class Squish, class Travel, EntityCount, Global(..), Map, Not(..), Unique, initStore)
 import Effect (Effect)
+import Effect.Class (class MonadEffect)
 import Effect.Ref (new)
+import Effect.Unsafe (unsafePerformEffect)
 import Type.Prelude (Proxy(..))
+
+---------------------------
+-- Tagless Final Wrapper --
+---------------------------
+
+newtype System a = System (Effect a)
+
+derive instance newtypeSystem :: Newtype (System a) _
+derive newtype instance functorSystem :: Functor System
+derive newtype instance applySystem :: Apply System
+derive newtype instance applicativeSystem :: Applicative System
+derive newtype instance bindSystem :: Bind System
+derive newtype instance monadSystem :: Monad System
+derive newtype instance monadEffectSystem :: MonadEffect System
+
+foreign import squishSystemArray :: forall a. Array (System a) -> System Unit
+foreign import travelSystemArray :: forall r. Array (System r) -> System (Array r)
+
+instance squishSystem :: Squish System where
+  squish_ = squishSystemArray
+
+instance travelSystem :: Travel System where
+  travel = travelSystemArray
+
+----------------
+-- Components --
+----------------
 
 data Score
   = Score Int
@@ -77,7 +107,11 @@ data Collision
 data MissileTimer
   = MissileTimer Int
 
-type WorldInner
+-----------
+-- World --
+-----------
+
+type WorldData
   = { entityCounter :: Global EntityCount
     , score :: Global Score
     , level :: Global Level
@@ -94,11 +128,10 @@ type WorldInner
     , missileTimer :: Map MissileTimer
     }
 
-data World
-  = World WorldInner
+newtype World = World WorldData
+derive instance newtypeWorld :: Newtype (World) _
 
-unWorld :: World -> WorldInner
-unWorld (World world) = world
+proxyWorld = Proxy :: Proxy World
 
 initWorld :: Effect World
 initWorld = do
@@ -134,44 +167,50 @@ initWorld = do
         , missileTimer
         }
 
-instance hasEntityCounter :: GetStore World EntityCount (Global EntityCount) where
-  getStore _ = asks (unWorld >>> _.entityCounter)
+world :: World
+world = unsafePerformEffect initWorld
 
-instance hasPlayer :: GetStore World Player (Unique Player) where
-  getStore _ = asks (unWorld >>> _.player)
+instance monadAskSystem :: MonadAsk World System where
+  ask = System $ pure world
 
-instance hasAlien :: GetStore World Alien (Map Alien) where
-  getStore _ = asks (unWorld >>> _.alien)
+instance storeEntityCounter :: Store World (Global EntityCount) EntityCount where
+  getStore _ = ask <#> unwrap <#> _.entityCounter
 
-instance hasMissile :: GetStore World Missile (Map Missile) where
-  getStore _ = asks (unWorld >>> _.missile)
+instance storePlayer :: Store World (Unique Player) Player where
+  getStore _ = ask <#> unwrap <#> _.player
 
-instance hasBomb :: GetStore World Bomb (Map Bomb) where
-  getStore _ = asks (unWorld >>> _.bomb)
+instance storeAlien :: Store World (Map Alien) Alien where
+  getStore _ = ask <#> unwrap <#> _.alien
 
-instance hasParticle :: GetStore World Particle (Map Particle) where
-  getStore _ = asks (unWorld >>> _.particle)
+instance storeMissile :: Store World (Map Missile) Missile where
+  getStore _ = ask <#> unwrap <#> _.missile
 
-instance hasAccelerate :: GetStore World Accelerate (Map Accelerate) where
-  getStore _ = asks (unWorld >>> _.accelerate)
+instance storeBomb :: Store World (Map Bomb) Bomb where
+  getStore _ = ask <#> unwrap <#> _.bomb
 
-instance getStorePosition :: GetStore World Position (Map Position) where
-  getStore _ = asks (unWorld >>> _.position)
+instance storeParticle :: Store World (Map Particle) Particle where
+  getStore _ = ask <#> unwrap <#> _.particle
 
-instance getStoreVelocity :: GetStore World Velocity (Map Velocity) where
-  getStore _ = asks (unWorld >>> _.velocity)
+instance storeAccelerate :: Store World (Map Accelerate) Accelerate where
+  getStore _ = ask <#> unwrap <#> _.accelerate
 
-instance getStoreCollision :: GetStore World Collision (Map Collision) where
-  getStore _ = asks (unWorld >>> _.drawable)
+instance storePosition :: Store World (Map Position) Position where
+  getStore _ = ask <#> unwrap <#> _.position
 
-instance getStoreMissileTimer :: GetStore World MissileTimer (Map MissileTimer) where
-  getStore _ = asks (unWorld >>> _.missileTimer)
+instance storeVelocity :: Store World (Map Velocity) Velocity where
+  getStore _ = ask <#> unwrap <#> _.velocity
 
-instance getStoreScore :: GetStore World Score (Global Score) where
-  getStore _ = asks (unWorld >>> _.score)
+instance storeCollision :: Store World (Map Collision) Collision where
+  getStore _ = ask <#> unwrap <#> _.drawable
 
-instance getStoreLevel :: GetStore World Level (Global Level) where
-  getStore _ = asks (unWorld >>> _.level)
+instance storeMissileTimer :: Store World (Map MissileTimer) MissileTimer where
+  getStore _ = ask <#> unwrap <#> _.missileTimer
 
-instance getStoreGameState :: GetStore World GameState (Global GameState) where
-  getStore _ = asks (unWorld >>> _.gameState)
+instance storeScore :: Store World (Global Score) Score where
+  getStore _ = ask <#> unwrap <#> _.score
+
+instance storeLevel :: Store World (Global Level) Level where
+  getStore _ = ask <#> unwrap <#> _.level
+
+instance storeGameState :: Store World (Global GameState) GameState where
+  getStore _ = ask <#> unwrap <#> _.gameState

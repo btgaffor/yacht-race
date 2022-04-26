@@ -1,0 +1,13 @@
+* DONE switch to tagless final format
+  CLOSED: [2022-04-26 Tue 16:26]
+** DONE render functions in MainTagless.purs
+   CLOSED: [2022-04-16 Sat 12:05]
+** CANCELLED figure out error in main
+   CLOSED: [2022-04-26 Tue 16:25]
+   :LOGBOOK:
+   - State "CANCELLED"  from "NEXT"       [2022-04-26 Tue 16:25]
+   :END:
+** DONE replace main with tagless
+   CLOSED: [2022-04-26 Tue 16:25]
+** DONE test?
+   CLOSED: [2022-04-26 Tue 16:25]
