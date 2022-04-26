@@ -5,7 +5,6 @@ import Prelude
 import Control.Monad.Reader.Class (class MonadAsk, ask)
 import Data.Newtype (class Newtype, unwrap)
 import Data.Tuple (Tuple)
-import Data.Tuple.Nested ((/\))
 import Ecs (class Store, class SequenceArray, class TraverseArray, EntityCount, Global(..), Map, Not(..), Unique, initStore)
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
@@ -62,35 +61,27 @@ data Player
 
 data Alien
   = Alien
-
-alienComponents = Proxy :: Proxy (Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
-
-notAlienComponents :: Tuple (Not Alien) (Tuple (Not Position) (Tuple (Not Velocity) (Tuple (Not Collision) (Not Accelerate))))
-notAlienComponents = (Not :: Not Alien) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision) /\ (Not :: Not Accelerate)
+type AlienComponents = Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate)))
+alienComponents = Proxy :: Proxy AlienComponents
+notAlienComponents = Not :: Not AlienComponents
 
 data Missile
   = Missile
-
-missileComponents = Proxy :: Proxy (Tuple Missile (Tuple Position (Tuple Velocity Collision)))
-
-notMissileComponents :: Tuple (Not Missile) (Tuple (Not Position) (Tuple (Not Velocity) (Not Collision)))
-notMissileComponents = (Not :: Not Missile) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision)
+type MissileComponents = Tuple Missile (Tuple Position (Tuple Velocity Collision))
+missileComponents = Proxy :: Proxy MissileComponents
+notMissileComponents = Not :: Not MissileComponents
 
 data Bomb
   = Bomb
-
-bombComponents = Proxy :: Proxy (Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate))))
-
-notBombComponents :: Tuple (Not Bomb) (Tuple (Not Position) (Tuple (Not Velocity) (Tuple (Not Collision) (Not Accelerate))))
-notBombComponents = (Not :: Not Bomb) /\ (Not :: Not Position) /\ (Not :: Not Velocity) /\ (Not :: Not Collision) /\ (Not :: Not Accelerate)
+type BombComponents = Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate)))
+bombComponents = Proxy :: Proxy BombComponents
+notBombComponents = Not :: Not BombComponents
 
 data Particle
   = Particle
-
-particleComponents = Proxy :: Proxy (Tuple Particle (Tuple Position Velocity))
-
-notParticalComponents :: Tuple (Not Particle) (Tuple (Not Position) (Not Velocity))
-notParticalComponents = (Not :: Not Particle) /\ (Not :: Not Position) /\ (Not :: Not Velocity)
+type ParticleComponents = Tuple Particle (Tuple Position Velocity)
+particleComponents = Proxy :: Proxy ParticleComponents
+notParticalComponents = Not :: Not ParticleComponents
 
 data Accelerate
   = Accelerate
