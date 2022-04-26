@@ -6,7 +6,7 @@ import Control.Monad.Reader.Class (class MonadAsk, ask)
 import Data.Newtype (class Newtype, unwrap)
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
-import Ecs (class Store, class Squish, class Travel, EntityCount, Global(..), Map, Not(..), Unique, initStore)
+import Ecs (class Store, class SequenceArray, class TraverseArray, EntityCount, Global(..), Map, Not(..), Unique, initStore)
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Ref (new)
@@ -30,11 +30,11 @@ derive newtype instance monadEffectSystem :: MonadEffect System
 foreign import squishSystemArray :: forall a. Array (System a) -> System Unit
 foreign import travelSystemArray :: forall r. Array (System r) -> System (Array r)
 
-instance squishSystem :: Squish System where
-  squish_ = squishSystemArray
+instance sequenceArraySystem :: SequenceArray System where
+  sequenceArray_ = squishSystemArray
 
-instance travelSystem :: Travel System where
-  travel = travelSystemArray
+instance traverseArraySystem :: TraverseArray System where
+  traverseArray = travelSystemArray
 
 ----------------
 -- Components --

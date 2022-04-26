@@ -1,7 +1,8 @@
 module Main where
 
 import Prelude
-import Control.Monad.Reader (ReaderT)
+
+import Control.Monad.Reader (class MonadAsk, ReaderT)
 import Data.Array (range)
 import Data.Either (Either(..))
 import Data.Foldable (sequence_)
@@ -9,17 +10,16 @@ import Data.Int (toNumber)
 import Data.Newtype (unwrap)
 import Data.Traversable (for)
 import Data.Tuple.Nested ((/\))
+import Ecs (class SequenceArray, Entity(..), Not(..), cfold, cmap, cmapAccumulate, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set, sequenceArray_)
 import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont)
-import EcsGameLoop (Keys, canvasHeight, canvasWidth)
-import EcsGameLoop (runGameEngine)
-import Ecs (Entity(..), Not(..), cfold, cmap, cmapAccumulate, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set, squish_)
+import EcsGameLoop (Keys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
-import Effect.Class (liftEffect)
+import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Random (randomInt, randomRange)
 import Effect.Ref (Ref, modify_, read)
 import Graphics.Canvas (Context2D)
 import Math (cos, pi, pow, sin, sqrt)
-import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), System, Velocity(..), alienComponents, missileComponents, notBombComponents, notMissileComponents, notParticalComponents, proxyWorld)
+import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), System, Velocity(..), World, alienComponents, missileComponents, notBombComponents, notMissileComponents, notParticalComponents, proxyWorld)
 
 ----------
 -- Util --
@@ -61,9 +61,9 @@ gameFrame :: Ref Keys -> System Unit
 gameFrame keysRef = do
   GameState state <- get (Entity 0)
   case state of
-    Waiting -> squish_ [ waitForSpace keysRef ]
+    Waiting -> sequenceArray_ [ waitForSpace keysRef ]
     Running ->
-      squish_
+      sequenceArray_
         [ decrementMissileTimers
         , movePlayer keysRef
         , playerShootMissile keysRef
@@ -90,7 +90,7 @@ waitForSpace keysRef = do
     else
       GameState state
 
-decrementMissileTimers :: System Unit
+decrementMissileTimers :: ∀ m. MonadAsk World m => MonadEffect m => SequenceArray m => m Unit
 decrementMissileTimers = cmap $ \(MissileTimer t) -> MissileTimer (t - 1)
 
 movePlayerLeft :: System Unit
