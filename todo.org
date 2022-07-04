@@ -1,13 +1,15 @@
-* DONE switch to tagless final format
-  CLOSED: [2022-04-26 Tue 16:26]
-** DONE render functions in MainTagless.purs
-   CLOSED: [2022-04-16 Sat 12:05]
-** CANCELLED figure out error in main
-   CLOSED: [2022-04-26 Tue 16:25]
-   :LOGBOOK:
-   - State "CANCELLED"  from "NEXT"       [2022-04-26 Tue 16:25]
-   :END:
-** DONE replace main with tagless
-   CLOSED: [2022-04-26 Tue 16:25]
-** DONE test?
-   CLOSED: [2022-04-26 Tue 16:25]
+* tasks
+** DONE scale down boat
+   CLOSED: [2022-06-25 Sat 18:40]
+** DONE make map
+   CLOSED: [2022-06-26 Sun 17:11]
+** DONE fix dead zone of sail power
+   CLOSED: [2022-06-26 Sun 17:14]
+** TODO apparent wind
+** TODO wind variability
+** TODO wind shadow
+** TODO multiplayer
+* cleanup
+** TODO copy svg to canvas [0/1]
+   - [ ] create canvas element dynamically, just like preprender
+** TODO clean up components

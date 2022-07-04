@@ -1,25 +1,27 @@
 module Main where
 
 import Prelude
-
 import Control.Monad.Reader (class MonadAsk, ReaderT)
-import Data.Array (range)
+import Data.Array (range, (..), fold)
 import Data.Either (Either(..))
 import Data.Foldable (sequence_)
 import Data.Int (toNumber)
+import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Traversable (for)
 import Data.Tuple.Nested ((/\))
 import Ecs (class SequenceArray, Entity(..), Not(..), cfold, cmap, cmapAccumulate, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set, sequenceArray_)
-import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont)
+import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont, fillRect, rotate, withContext, translate, scale)
+import ForeignUtil (copySvgToCanvas)
 import EcsGameLoop (Keys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Random (randomInt, randomRange)
 import Effect.Ref (Ref, modify_, read)
+import Effect.Console (log, logShow)
 import Graphics.Canvas (Context2D)
-import Math (cos, pi, pow, sin, sqrt)
-import Model (Accelerate(..), Alien(..), Bomb(..), Collision(..), GameState(..), GameStateValue(..), Level(..), Missile(..), MissileTimer(..), Particle(..), Player(..), Position(..), Score(..), System, Velocity(..), World, alienComponents, missileComponents, notBombComponents, notMissileComponents, notParticalComponents, proxyWorld)
+import Math (cos, pi, pow, sin, sqrt, abs, round)
+import Model (GameState(..), GameStateValue(..), Level(..), Player(..), Position(..), System, Velocity(..), World, proxyWorld, Wind(..), WindValue)
 
 ----------
 -- Util --
@@ -33,53 +35,16 @@ generateRandomBombTimeout = randomInt 25 1200
 gameSetup :: System Unit
 gameSetup = do
   void $ newEntity $ Player
-    /\ Position { x: 375.0, y: 520.0 }
-    /\ Velocity { vx: 5.0, vy: 0.0 }
-    /\ Collision { width: 30.0, height: 40.0 }
-    /\ MissileTimer 0
-  createEnemies
-
-createEnemies :: System Unit
-createEnemies =
-  sequence_ do
-    x <- [ 12.0, 60.0, 108.0, 156.0, 204.0, 252.0, 300.0, 348.0, 396.0, 444.0, 492.0 ]
-    y <- [ 22.0, 70.0, 118.0, 166.0, 214.0, 262.0 ]
-    pure do
-      t <- liftEffect $ generateRandomBombTimeout
-      newEntity
-        $ Alien
-        /\ Accelerate
-        /\ Position { x, y }
-        /\ Velocity { vx: 2.0, vy: 0.0 }
-        /\ Collision { width: 30.0, height: 30.0 }
-        /\ MissileTimer t
+    /\ Position { x: 400.0, y: 3690.0, boatAngle: pi / 2.0, sailAngle: pi, speed: 0.0, diagnostic: "hi", zoom: 1.0 }
+    /\ Velocity 0.0
+  void $ newEntity $ Wind { direction: 0.0, velocity: 5.0 }
 
 -----------
 -- Frame --
 -----------
 gameFrame :: Ref Keys -> System Unit
 gameFrame keysRef = do
-  GameState state <- get (Entity 0)
-  case state of
-    Waiting -> sequenceArray_ [ waitForSpace keysRef ]
-    Running ->
-      sequenceArray_
-        [ decrementMissileTimers
-        , movePlayer keysRef
-        , playerShootMissile keysRef
-        , aliensDropBombs
-        , moveNotPlayers
-        , bounceAliens
-        , slowParticles
-        , clampPlayer
-        , checkMissileCollisions
-        , checkBombCollisions
-        , checkForVictory keysRef
-        , penalizeMissedMissiles
-        , clearOffScreen
-        ]
-    Won -> pure unit
-    Lost -> pure unit
+  sequenceArray_ [ controlPlayer keysRef, clampBoatAngle, flipSailDownWind, clampSail, updatePlayerSpeed, movePlayer ]
 
 waitForSpace :: Ref Keys -> System Unit
 waitForSpace keysRef = do
@@ -90,284 +55,249 @@ waitForSpace keysRef = do
     else
       GameState state
 
-decrementMissileTimers :: ∀ m. MonadAsk World m => MonadEffect m => SequenceArray m => m Unit
-decrementMissileTimers = cmap $ \(MissileTimer t) -> MissileTimer (t - 1)
+boatTurnSpeed = 0.03
 
-movePlayerLeft :: System Unit
-movePlayerLeft = cmap $ \(Player /\ Position { x, y } /\ Velocity { vx }) -> Position { x: x - vx, y }
+sailTurnSpeed = 0.015
 
-movePlayerRight :: System Unit
-movePlayerRight = cmap $ \(Player /\ Position { x, y } /\ Velocity { vx }) -> Position { x: x + vx, y }
+zoomSpeed = 1.03
 
-movePlayer :: Ref Keys -> System Unit
-movePlayer keysRef = do
+controlPlayer :: Ref Keys -> System Unit
+controlPlayer keysRef = do
   keys <- liftEffect $ read keysRef
-  when keys.arrowLeft movePlayerLeft
-  when keys.arrowRight movePlayerRight
-
-playerShootMissile :: Ref Keys -> System Unit
-playerShootMissile keysRef = do
-  keys <- liftEffect $ read keysRef
+  when keys.arrowLeft do
+    cmap \(Player /\ Position p@{ boatAngle }) -> Position (p { boatAngle = boatAngle - boatTurnSpeed })
+  when keys.arrowRight do
+    cmap \(Player /\ Position p@{ boatAngle }) -> Position (p { boatAngle = boatAngle + boatTurnSpeed })
+  when keys.arrowUp do
+    cmap \(Player /\ Position p@{ sailAngle }) ->
+      if sailAngle <= pi then
+        Position (p { sailAngle = sailAngle - sailTurnSpeed })
+      else
+        Position (p { sailAngle = sailAngle + sailTurnSpeed })
+  when keys.arrowDown do
+    cmap \(Player /\ Position p@{ sailAngle }) ->
+      if sailAngle <= pi then
+        Position (p { sailAngle = sailAngle + sailTurnSpeed })
+      else
+        Position (p { sailAngle = sailAngle - sailTurnSpeed })
   when keys.space do
-    cmapM_ \(Player /\ Position { x, y } /\ MissileTimer t) -> do
-      when (t <= 0) do
-        void $ newEntity
-          $ Missile
-          /\ Position { x: x + 12.0, y }
-          /\ Velocity { vx: 0.0, vy: -10.0 }
-          /\ Collision { width: 6.0, height: 9.0 }
-        cmap $ \(Player /\ MissileTimer _) -> MissileTimer 15
+    cmap \(Player /\ Position p) -> Position (p { zoom = 0.2 })
+  when (not keys.space) do
+    cmap \(Player /\ Position p) -> Position (p { zoom = 1.0 })
 
-aliensDropBombs :: System Unit
-aliensDropBombs = do
-  cmapM \(Alien /\ Position { x, y } /\ MissileTimer t) -> do
-    if (t <= 0) then do
-      void $ newEntity
-        $ Bomb
-        /\ Accelerate
-        /\ Position { x: x + 12.0, y: y + 24.0 }
-        /\ Velocity { vx: 0.0, vy: 8.0 }
-        /\ Collision { width: 6.0, height: 6.0 }
-      newTimer <- liftEffect $ generateRandomBombTimeout
-      pure $ Left $ MissileTimer newTimer
+clampBoatAngle :: System Unit
+clampBoatAngle =
+  cmap \(Player /\ Position p@{ boatAngle }) -> Position (p { boatAngle = clampAngle boatAngle })
+
+-- TODO: account for wind direction
+flipSailDownWind :: System Unit
+flipSailDownWind =
+  cmap \(Player /\ Position p@{ boatAngle, sailAngle }) ->
+    if boatAngle <= pi && sailAngle > pi then
+       Position (p { sailAngle = pi - (sailAngle - pi) })
+    else if boatAngle > pi && sailAngle < pi then
+       Position (p { sailAngle = pi + (pi - sailAngle)})
     else
-      pure $ Right unit
+       Position p
 
-moveNotPlayers :: System Unit
-moveNotPlayers = do
-  cmap $ \(Position { x, y } /\ (Not :: Not Player) /\ (Not :: Not Accelerate) /\ Velocity { vx, vy }) -> Position { x: x + vx, y: y + vy }
-  Level level <- get (Entity global)
-  let
-    multiplier = pow 1.1 (toNumber (level - 1))
-  cmap
-    $ \(Accelerate /\ Position { x, y } /\ Velocity { vx, vy }) ->
-        Position { x: x + (vx * multiplier), y: y + (vy * multiplier) }
+-- | this keeps the sail from extending past halfway down the boat or retracting past the
+--   centerline. It also accounts for close-hauled facing, where the sail won't go past directly
+--   down-wind.
+clampSail :: System Unit
+clampSail =
+  -- TODO: account for wind direction
+  cmap \(Player /\ Position p@{ boatAngle, sailAngle }) ->
+    if boatAngle <= pi then
+      Position (p { sailAngle = sailAngle # min pi # max (pi - boatAngle) # max (pi / 2.0) })
+    else
+      Position (p { sailAngle = sailAngle # min (1.5 * pi) # min (2.0 * pi - boatAngle + pi) # max pi })
 
-slowParticles :: System Unit
-slowParticles =
-  cmap
-    $ \(Particle /\ Velocity { vx, vy }) ->
-        if (sqrt (vx * vx + vy * vy) <= 0.1) then
-          Left notParticalComponents
+updatePlayerSpeed :: System Unit
+updatePlayerSpeed = do
+  Wind wind <- get (Entity global)
+  cmap \(Player /\ Position p@{ x, y, boatAngle, sailAngle, speed }) -> do
+    let
+      sailToWindAngle = calculateSailToWindAngle (clampAngle (boatAngle + sailAngle)) wind.direction
+
+      sailFraction = calculateSailForce sailToWindAngle
+
+      sailForce = sailFraction * wind.velocity
+
+      maxSpeed =
+        if sailAngle <= pi then
+          (cos (sailAngle - (pi / 2.0))) * sailForce
         else
-          Right (Velocity { vx: vx * 0.90, vy: vy * 0.90 })
+          -(cos (sailAngle - (pi / 2.0))) * sailForce
 
-reverseAlienVelocity :: System Unit
-reverseAlienVelocity = cmap $ \(Alien /\ Velocity v) -> Velocity (v { vx = -v.vx })
+      speed' = speed + ((maxSpeed - speed) * 0.01)
+    Position (p { speed = speed', diagnostic = show sailAngle })
 
-clampAliens :: System Unit
-clampAliens = cmap $ \(Alien /\ Position { x, y } /\ Collision { width }) -> Position { x: x # min (canvasWidth - width) # max 0.0, y }
+calculateSailToWindAngle sailAngle windAngle =
+  abs (sailAngle - windAngle - pi)
 
-bounceAliens :: System Unit
-bounceAliens = do
-  shouldBounce <-
-    cfold
-      ( \accumulator (Alien /\ Position { x } /\ Collision { width }) ->
-          accumulator || x <= 0.0 || x + width >= canvasWidth
-      )
-      false
-  when shouldBounce do
-    reverseAlienVelocity
-    clampAliens
+movePlayer :: System Unit
+movePlayer =
+  cmap \(Player /\ Position p@{ x, y, boatAngle, speed }) ->
+    let
+      x' = x + ((sin boatAngle) * speed)
 
-clampPlayer :: System Unit
-clampPlayer = cmap $ \(Player /\ Position { x, y } /\ Collision { width }) -> Position { x: x # min (canvasWidth - width) # max 0.0, y }
+      y' = y - ((cos boatAngle) * speed)
+    in
+      Position (p { x = x', y = y' })
 
-checkMissileCollisions :: System Unit
-checkMissileCollisions = do
-  cmapM_
-    $ \(Alien /\ (eAlien :: Entity) /\ (alienP :: Position) /\ (alienC :: Collision)) -> do
-        cmapM_
-          $ \(Missile /\ (eMissile :: Entity) /\ (missileP :: Position) /\ (missileC :: Collision)) -> do
-              when (overlaps alienP alienC missileP missileC) do
-                destroy eAlien alienComponents
-                destroy eMissile missileComponents
-                modifyGlobal proxyWorld \(Score score) -> Score (score + 50)
-                generateAlienParticles alienP
+calculateSailForce sailToWindAngle =
+  if sailToWindAngle >= 0.30 && sailToWindAngle < 0.52 then
+    linear sailToWindAngle 0.30 0.52 0.3 0.7
+  else if sailToWindAngle >= 0.52 && sailToWindAngle < 0.60 then
+    linear sailToWindAngle 0.52 0.60 0.7 0.7
+  else if sailToWindAngle >= 0.60 && sailToWindAngle < 0.66 then
+    linear sailToWindAngle 0.60 0.66 0.7 0.6
+  else if sailToWindAngle >= 0.66 && sailToWindAngle < 1.4 then
+    linear sailToWindAngle 0.66 1.4 0.6 0.98
+  else if sailToWindAngle >= 1.4 && sailToWindAngle <= (pi / 2.0) then
+    linear sailToWindAngle 1.4 (pi / 2.0) 0.98 1.0
+  else
+    0.0
 
-generateAlienParticles :: Position -> System Unit
-generateAlienParticles (Position { x, y }) = do
-  numParticles <- liftEffect $ randomInt 3 5
-  void
-    $ for (range 1 numParticles) \_ -> do
-        angle <- liftEffect $ randomRange 0.0 (2.0 * pi)
-        let
-          vx = 3.0 * cos (angle)
+linear angle angleStart angleEnd valueStart valueEnd = ((angle - angleStart) / (angleEnd - angleStart) * (valueEnd - valueStart)) + valueStart
 
-          vy = 3.0 * sin (angle)
-        void $ newEntity $ Particle /\ Position { x: x + 15.0, y: y + 15.0 } /\ Velocity { vx, vy }
-
-overlaps :: Position -> Collision -> Position -> Collision -> Boolean
-overlaps (Position p1) (Collision d1) (Position p2) (Collision d2) =
-  let
-    xOverlaps = p1.x + d1.width >= p2.x && p1.x <= p2.x + d2.width
-
-    yOverlaps = p1.y + d1.height >= p2.y && p1.y <= p2.y + d2.height
-  in
-    xOverlaps && yOverlaps
-
-checkBombCollisions :: System Unit
-checkBombCollisions =
-  cmapM_
-    $ \(Player /\ (playerP :: Position) /\ (playerC :: Collision)) ->
-        cmapM_
-          $ \(Bomb /\ (bombP :: Position) /\ (bombC :: Collision)) ->
-              when (overlaps playerP playerC bombP bombC) do
-                modifyGlobal proxyWorld \(GameState _) -> GameState Lost
-
-destroyParticles :: System Unit
-destroyParticles = cmap $ \(Particle) -> notParticalComponents
-
-destroyMissiles :: System Unit
-destroyMissiles = cmap $ \(Missile) -> notMissileComponents
-
-destroyBombs :: System Unit
-destroyBombs = cmap $ \(Bomb) -> notBombComponents
-
-checkForVictory :: Ref Keys -> System Unit
-checkForVictory keysRef = do
-  numAliens <- cfold (\accumulator Alien -> accumulator + 1) 0
-  GameState state <- get (Entity global)
-  Level level <- get (Entity global)
-  when ((numAliens == 0) && (state == Running)) do
-    destroyParticles
-    destroyMissiles
-    destroyBombs
-    set (Entity global) (GameState Waiting /\ Level (level + 1))
-    createEnemies
-    liftEffect $ modify_ (\s -> s { space = false }) keysRef
-
-penalizeMissedMissiles :: System Unit
-penalizeMissedMissiles =
-  cmap
-    $ \(Missile /\ Position { x, y } /\ Collision { width, height } /\ Velocity _ /\ Score score) ->
-        if (x < 0.0) || (x > canvasWidth - width) || (y < 0.0) || (y > 600.0 - height) then
-          Right (Score (score - 10))
-        else
-          Left unit
-
-clearOffScreen :: System Unit
-clearOffScreen = do
-  cmap
-    $ \(Position { x, y } /\ Collision { width, height } /\ Velocity _) ->
-        if (x < 0.0) || (x > canvasWidth - width) || (y < 0.0) || (y > canvasHeight - height) then do
-          Left $ (Not :: Not Position) /\ (Not :: Not Collision) /\ (Not :: Not Velocity)
-        else
-          Right unit
+clampAngle :: Number -> Number
+clampAngle angle =
+  if angle < 0.0 then
+    clampAngle (angle + (2.0 * pi))
+  else if angle > 2.0 * pi then
+    clampAngle (angle - (2.0 * pi))
+  else
+    angle
 
 -----------------
 -- RenderFrame --
 -----------------
+
+scaleValue = 0.4
+
 renderFrame :: System (Array (ReaderT Context2D Effect Unit))
 renderFrame = do
-  GameState state <- get (Entity global)
-  Score score <- get (Entity global)
-  Level level <- get (Entity global)
-  renderMissiles <- cmapAccumulate $ \(Missile /\ Position { x, y }) -> renderFromCanvas "missile" x y
-  renderPlayers <- cmapAccumulate $ \(Player /\ Position { x, y }) -> renderFromCanvas "player" x y
-  renderBombs <- cmapAccumulate $ \(Bomb /\ Position { x, y }) -> renderFromCanvas "bomb" x y
-  renderAliens <- cmapAccumulate $ \(Alien /\ Position { x, y }) -> renderFromCanvas "alien" x y
-  renderParticles <- cmapAccumulate $ \(Particle /\ Position { x, y }) -> renderFromCanvas "particle" x y
-  pure
-    $ case state of
-        Waiting -> [ renderWaiting level ]
-        Running -> renderMissiles <> renderPlayers <> renderAliens <> renderBombs <> renderParticles <> [ renderScore score ]
-        Won -> [ renderVictory score ]
-        Lost -> [ renderLoss score ]
+  Wind wind <- get (Entity global)
+  setCamera <-
+    cmapAccumulate \(Player /\ Position { x, y, zoom }) -> do
+      scale { scaleX: zoom, scaleY: zoom }
+      translate { translateX: (0.0 - x + (canvasWidth / 2.0 / zoom)), translateY: (0.0 - y + (canvasHeight / 2.0 / zoom)) }
+  unsetCamera <-
+    cmapAccumulate \(Player /\ Position { x, y, zoom }) -> do
+      translate { translateX: (x - (canvasWidth / 2.0 / zoom)), translateY: (y - (canvasHeight / 2.0 / zoom)) }
+      scale { scaleX: 1.0 / zoom, scaleY: 1.0 / zoom }
+  renderPlayers' <- renderPlayers
+  renderHUD' <- renderHUD
+  pure $ [ renderWater] <> setCamera <> [ renderIslands, renderWaiting, renderSailForceGraph ] <> renderPlayers' <> unsetCamera <> renderHUD'
 
-renderWaiting :: Int -> ReaderT Context2D Effect Unit
-renderWaiting level = do
+renderWater :: ReaderT Context2D Effect Unit
+renderWater = do
+  setFillStyle "lightblue"
+  fillRect { x: 0.0, y: 0.0, width: canvasWidth, height: canvasHeight }
+
+renderHUD :: System (Array (ReaderT Context2D Effect Unit))
+renderHUD =
+  cmapAccumulate \(Player /\ Position { x, y, boatAngle, sailAngle, diagnostic, speed }) -> do
+    setFillStyle "black"
+    setFont "16px sans-serif"
+    fillText "Speed:" 680.0 565.0
+    fillText (truncateAt speed 2) 740.0 565.0
+
+truncateAt :: Number -> Int -> String
+truncateAt value place =
+  let
+    power = pow 10.0 (toNumber place)
+  in
+    show $ (value * power) # round # (_ / power)
+
+renderIslands = do
+  renderFromCanvas "islands-canvas" (0.0) (0.0)
+  -- renderEllipse 600.0 600.0 300.0 200.0
+  -- renderEllipse 1200.0 600.0 300.0 200.0
+  -- renderEllipse 900.0 1200.0 200.0 300.0
+
+renderSailForceGraph :: ReaderT Context2D Effect Unit
+renderSailForceGraph = do
+  withContext do
+    setFillStyle "black"
+    translate { translateX: 200.0, translateY: 200.0 }
+    fillRect { x: -3.0, y: -100.0, width: 3.0, height: 100.0 }
+    fillRect { x: 0.0, y: 0.0, width: 100.0, height: 3.0 }
+    setFillStyle "red"
+    fold $ (0 .. 156) <#> (\v -> (toNumber v) / 100.0) <#> renderForceGraphDot
+
+renderForceGraphDot angle = do
+  let
+    f = calculateSailForce angle
+
+    x = ((sin angle) * f * 100.0)
+
+    y = ((0.0 - (cos angle)) * f * 100.0)
+  fillRect { x: x - 1.0, y: y - 1.0, width: 2.0, height: 2.0 }
+
+renderWaiting :: ReaderT Context2D Effect Unit
+renderWaiting = do
   setFillStyle "white"
   setFont "64px sans-serif"
-  fillText ("Level: " <> show level) 260.0 256.0
-  fillText "Press any key" 180.0 320.0
+  fillText "Press space" 200.0 320.0
   fillText "to start." 270.0 384.0
 
-renderScore :: Int -> ReaderT Context2D Effect Unit
-renderScore score = do
-  setFillStyle "white"
-  setFont "12px sans-serif"
-  fillText ("Score: " <> show score) 20.0 590.0
+renderPlayers :: System (Array (ReaderT Context2D Effect Unit))
+renderPlayers =
+  cmapAccumulate \(Player /\ Position { x, y, boatAngle, sailAngle, diagnostic }) -> do
+    withContext do
+      translate { translateX: x, translateY: y }
+      rotate boatAngle
+      -- renderFromCanvas "boat" (x - 10.0) (y - 25.0)
+      renderFromCanvas "boat" (-8.0) (-20.0)
+      rotate sailAngle
+      renderFromCanvas "sail" (-1.5) (-24.0)
+      -- rotate (0.0 - boatAngle - sailAngle)
+      -- setFillStyle "black"
+      -- setFont "16px sans-serif"
+      -- fillText diagnostic 10.0 20.0
 
-renderVictory :: Int -> ReaderT Context2D Effect Unit
-renderVictory score = do
-  setFillStyle "white"
-  setFont "64px sans-serif"
-  fillText ("Victory!") 270.0 280.0
-  fillText ("Final Score: " <> show score) 150.0 350.0
-
-renderLoss :: Int -> ReaderT Context2D Effect Unit
-renderLoss score = do
-  setFillStyle "white"
-  setFont "64px sans-serif"
-  fillText ("You died!") 240.0 280.0
-  fillText ("Final Score: " <> show score) 150.0 350.0
-
-preRenderPlayer :: Effect Unit
-preRenderPlayer =
-  createPrerenderCanvas "player" "30px" "40px" do
-    setFillStyle "lightgray"
-    fillPath do
-      moveTo 15.0 0.0
-      lineTo 30.0 35.0
-      lineTo 0.0 35.0
-      closePath
+preRenderBoat :: Effect Unit
+preRenderBoat =
+  createPrerenderCanvas "boat" "16px" "40px" do
     setFillStyle "red"
     fillPath do
-      moveTo 10.0 35.0
-      lineTo 7.5 40.0
-      lineTo 5.0 35.0
-      closePath
-    fillPath do
-      moveTo 25.0 35.0
-      lineTo 22.5 40.0
-      lineTo 20.0 35.0
+      moveTo 8.0 0.0
+      lineTo 16.0 16.0
+      lineTo 16.0 40.0
+      lineTo 0.0 40.0
+      lineTo 0.0 16.0
       closePath
 
-preRenderMissile :: Effect Unit
-preRenderMissile =
-  createPrerenderCanvas "missile" "6px" "9px" do
-    setFillStyle "gray"
-    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
-    fillPath $ rect { x: 0.0, y: 3.0, width: 6.0, height: 6.0 }
-    setFillStyle "red"
-    fillPath do
-      moveTo 5.0 9.0
-      lineTo 3.0 13.0
-      lineTo 1.0 9.0
-      closePath
+preRenderSail :: Effect Unit
+preRenderSail =
+  createPrerenderCanvas "sail" "3px" "30px" do
+    setFillStyle "black"
+    fillRect { x: 0.0, y: 0.0, width: 3.0, height: 24.0 }
 
-preRenderAlien :: Effect Unit
-preRenderAlien =
-  createPrerenderCanvas "alien" "30px" "30px" do
-    setFillStyle "green"
-    renderEllipse 15.0 12.0 24.0 12.0 -- horizontal body
-    renderEllipse 3.0 15.0 6.0 18.0 -- left wing
-    renderEllipse 27.0 15.0 6.0 18.0 -- right wing
-    renderEllipse 15.0 15.0 12.0 30.0 -- vertical body
-    setFillStyle "lightgray"
-    renderEllipse 15.0 21.0 3.0 6.0 -- cockpit
-
-preRenderBomb :: Effect Unit
-preRenderBomb =
-  createPrerenderCanvas "bomb" "6px" "6px" do
-    setFillStyle "gray"
-    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
-
-preRenderParticle :: Effect Unit
-preRenderParticle =
-  createPrerenderCanvas "particle" "6px" "6px" do
+preRenderMark :: Effect Unit
+preRenderMark =
+  createPrerenderCanvas "mark" "32px" "28px" do
     setFillStyle "orange"
-    fillPath $ arc { x: 3.0, y: 3.0, radius: 3.0, start: 0.0, end: 365.0 }
+    fillPath do
+      moveTo 16.0 0.0
+      lineTo 32.0 28.0
+      lineTo 0.0 28.0
+      closePath
+
+preRenderIslands :: Effect Unit
+preRenderIslands = do
+  _ <- copySvgToCanvas "islands-svg" "islands-canvas"
+  pure unit
 
 ----------
 -- Main --
 ----------
 main :: Effect Unit
 main = do
-  preRenderPlayer
-  preRenderMissile
-  preRenderAlien
-  preRenderBomb
-  preRenderParticle
+  preRenderBoat
+  preRenderSail
+  preRenderMark
+  preRenderIslands
   unwrap (runGameEngine gameSetup gameFrame renderFrame)

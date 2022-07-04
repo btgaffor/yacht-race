@@ -4,13 +4,13 @@ import Prelude
 
 import Control.Monad.Reader.Class (class MonadAsk, ask)
 import Data.Newtype (class Newtype, unwrap)
-import Data.Tuple (Tuple)
-import Ecs (class Store, class SequenceArray, class TraverseArray, EntityCount, Global(..), Map, Not(..), Unique, initStore)
+import Ecs (class Store, class SequenceArray, class TraverseArray, EntityCount, Global(..), Map, Unique, initStore)
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Ref (new)
 import Effect.Unsafe (unsafePerformEffect)
 import Type.Prelude (Proxy(..))
+import Math (pi)
 
 ---------------------------
 -- Tagless Final Wrapper --
@@ -39,17 +39,12 @@ instance traverseArraySystem :: TraverseArray System where
 -- Components --
 ----------------
 
-data Score
-  = Score Int
-
 data Level
   = Level Int
 
 data GameStateValue
   = Waiting
   | Running
-  | Won
-  | Lost
 
 derive instance eqGameStateValue :: Eq GameStateValue
 
@@ -59,44 +54,16 @@ data GameState
 data Player
   = Player
 
-data Alien
-  = Alien
-type AlienComponents = Tuple Alien (Tuple Position (Tuple Velocity (Tuple Collision Accelerate)))
-alienComponents = Proxy :: Proxy AlienComponents
-notAlienComponents = Not :: Not AlienComponents
-
-data Missile
-  = Missile
-type MissileComponents = Tuple Missile (Tuple Position (Tuple Velocity Collision))
-missileComponents = Proxy :: Proxy MissileComponents
-notMissileComponents = Not :: Not MissileComponents
-
-data Bomb
-  = Bomb
-type BombComponents = Tuple Bomb (Tuple Position (Tuple Velocity (Tuple Collision Accelerate)))
-bombComponents = Proxy :: Proxy BombComponents
-notBombComponents = Not :: Not BombComponents
-
-data Particle
-  = Particle
-type ParticleComponents = Tuple Particle (Tuple Position Velocity)
-particleComponents = Proxy :: Proxy ParticleComponents
-notParticalComponents = Not :: Not ParticleComponents
-
-data Accelerate
-  = Accelerate
-
 data Position
-  = Position { x :: Number, y :: Number }
+  = Position { x :: Number, y :: Number, boatAngle :: Number, sailAngle :: Number, speed :: Number, diagnostic :: String, zoom :: Number }
 
 data Velocity
-  = Velocity { vx :: Number, vy :: Number }
+  = Velocity Number
 
-data Collision
-  = Collision { width :: Number, height :: Number }
+type WindValue = { direction :: Number, velocity :: Number }
 
-data MissileTimer
-  = MissileTimer Int
+data Wind
+  = Wind WindValue
 
 -----------
 -- World --
@@ -104,19 +71,12 @@ data MissileTimer
 
 type WorldData
   = { entityCounter :: Global EntityCount
-    , score :: Global Score
     , level :: Global Level
     , gameState :: Global GameState
+    , wind :: Global Wind
     , player :: Unique Player
-    , alien :: Map Alien
-    , missile :: Map Missile
-    , bomb :: Map Bomb
-    , particle :: Map Particle
-    , accelerate :: Map Accelerate
     , position :: Map Position
     , velocity :: Map Velocity
-    , drawable :: Map Collision
-    , missileTimer :: Map MissileTimer
     }
 
 newtype World = World WorldData
@@ -126,36 +86,22 @@ proxyWorld = Proxy :: Proxy World
 
 initWorld :: Effect World
 initWorld = do
-  score <- Global <$> new (Score 0)
   level <- Global <$> new (Level 1)
   gameState <- Global <$> new (GameState Waiting)
+  wind <- Global <$> new (Wind { direction: pi, velocity: 5.0 })
   entityCounter <- initStore
   player <- initStore
-  alien <- initStore
-  missile <- initStore
-  bomb <- initStore
-  particle <- initStore
-  accelerate <- initStore
   position <- initStore
   velocity <- initStore
-  drawable <- initStore
-  missileTimer <- initStore
   pure
     $ World
         { entityCounter
-        , score
         , level
         , gameState
+        , wind
         , player
-        , alien
-        , missile
-        , bomb
-        , particle
-        , accelerate
         , position
         , velocity
-        , drawable
-        , missileTimer
         }
 
 world :: World
@@ -170,38 +116,17 @@ instance storeEntityCounter :: Store World (Global EntityCount) EntityCount wher
 instance storePlayer :: Store World (Unique Player) Player where
   getStore _ = ask <#> unwrap <#> _.player
 
-instance storeAlien :: Store World (Map Alien) Alien where
-  getStore _ = ask <#> unwrap <#> _.alien
-
-instance storeMissile :: Store World (Map Missile) Missile where
-  getStore _ = ask <#> unwrap <#> _.missile
-
-instance storeBomb :: Store World (Map Bomb) Bomb where
-  getStore _ = ask <#> unwrap <#> _.bomb
-
-instance storeParticle :: Store World (Map Particle) Particle where
-  getStore _ = ask <#> unwrap <#> _.particle
-
-instance storeAccelerate :: Store World (Map Accelerate) Accelerate where
-  getStore _ = ask <#> unwrap <#> _.accelerate
-
 instance storePosition :: Store World (Map Position) Position where
   getStore _ = ask <#> unwrap <#> _.position
 
 instance storeVelocity :: Store World (Map Velocity) Velocity where
   getStore _ = ask <#> unwrap <#> _.velocity
 
-instance storeCollision :: Store World (Map Collision) Collision where
-  getStore _ = ask <#> unwrap <#> _.drawable
-
-instance storeMissileTimer :: Store World (Map MissileTimer) MissileTimer where
-  getStore _ = ask <#> unwrap <#> _.missileTimer
-
-instance storeScore :: Store World (Global Score) Score where
-  getStore _ = ask <#> unwrap <#> _.score
-
 instance storeLevel :: Store World (Global Level) Level where
   getStore _ = ask <#> unwrap <#> _.level
 
 instance storeGameState :: Store World (Global GameState) GameState where
   getStore _ = ask <#> unwrap <#> _.gameState
+
+instance storeWind :: Store World (Global Wind) Wind where
+  getStore _ = ask <#> unwrap <#> _.wind
