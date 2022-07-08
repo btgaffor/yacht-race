@@ -46,6 +46,7 @@ gameFrame :: Ref Keys -> System Unit
 gameFrame keysRef = do
   sequenceArray_ [ controlPlayer keysRef, clampBoatAngle, flipSailDownWind, clampSail, updatePlayerSpeed, movePlayer ]
 
+-- sequenceArray_ [ controlPlayer keysRef, clampBoatAngle, flipSailDownWind, movePlayer ]
 waitForSpace :: Ref Keys -> System Unit
 waitForSpace keysRef = do
   keys <- liftEffect $ read keysRef
@@ -55,10 +56,13 @@ waitForSpace keysRef = do
     else
       GameState state
 
+boatTurnSpeed :: Number
 boatTurnSpeed = 0.03
 
+sailTurnSpeed :: Number
 sailTurnSpeed = 0.015
 
+zoomSpeed :: Number
 zoomSpeed = 1.03
 
 controlPlayer :: Ref Keys -> System Unit
@@ -87,35 +91,53 @@ controlPlayer keysRef = do
 
 clampBoatAngle :: System Unit
 clampBoatAngle =
-  cmap \(Player /\ Position p@{ boatAngle }) -> Position (p { boatAngle = clampAngle boatAngle })
+  cmap \(Player /\ Position p@{ boatAngle }) ->
+    Position (p { boatAngle = clampAngle boatAngle })
 
--- TODO: account for wind direction
+-- | check if the wind is on the port or starboard side of the boat and make sure the sail is on the
+--   downwind side
 flipSailDownWind :: System Unit
 flipSailDownWind =
-  cmap \(Player /\ Position p@{ boatAngle, sailAngle }) ->
-    if boatAngle <= pi && sailAngle > pi then
-       Position (p { sailAngle = pi - (sailAngle - pi) })
-    else if boatAngle > pi && sailAngle < pi then
-       Position (p { sailAngle = pi + (pi - sailAngle)})
+  cmap \(Player /\ Position p@{ boatAngle, sailAngle } /\ Wind wind) ->
+    -- wind angle is subtracted so that the angle being checked has its origin at straight up
+    if (clampAngle (boatAngle - wind.direction)) <= pi && sailAngle > pi then
+      Position (p { sailAngle = pi - (sailAngle - pi) })
+    else if (clampAngle (boatAngle - wind.direction)) > pi && sailAngle < pi then
+      Position (p { sailAngle = pi + (pi - sailAngle) })
     else
-       Position p
+      Position p
 
 -- | this keeps the sail from extending past halfway down the boat or retracting past the
 --   centerline. It also accounts for close-hauled facing, where the sail won't go past directly
 --   down-wind.
 clampSail :: System Unit
 clampSail =
-  -- TODO: account for wind direction
-  cmap \(Player /\ Position p@{ boatAngle, sailAngle }) ->
-    if boatAngle <= pi then
-      Position (p { sailAngle = sailAngle # min pi # max (pi - boatAngle) # max (pi / 2.0) })
+  cmap \(Player /\ Position p@{ boatAngle, sailAngle } /\ Wind wind) ->
+    if (clampAngle (boatAngle - wind.direction)) <= pi then
+      Position
+        ( p
+            { sailAngle =
+              sailAngle
+                # clampMax pi -- fully extended, which is halfway up the boat
+                # clampMin (pi - (clampAngle (boatAngle - wind.direction))) -- can't go past directly downwind
+                # clampMin (pi / 2.0) -- fully retracted, which is parallel with the boat
+            }
+        )
     else
-      Position (p { sailAngle = sailAngle # min (1.5 * pi) # min (2.0 * pi - boatAngle + pi) # max pi })
+      Position
+        ( p
+            { sailAngle =
+              sailAngle
+                # clampMax (1.5 * pi) -- fully extended, which is halfway up the boat
+                # clampMax (2.0 * pi - (clampAngle (boatAngle - wind.direction)) + pi) -- can't go past directly downwind
+                # clampMin pi -- fully retracted, which is parallel with the boat
+            }
+        )
 
 updatePlayerSpeed :: System Unit
 updatePlayerSpeed = do
   Wind wind <- get (Entity global)
-  cmap \(Player /\ Position p@{ x, y, boatAngle, sailAngle, speed }) -> do
+  cmap \(Player /\ Position p@{ boatAngle, sailAngle, speed }) -> do
     let
       sailToWindAngle = calculateSailToWindAngle (clampAngle (boatAngle + sailAngle)) wind.direction
 
@@ -132,8 +154,8 @@ updatePlayerSpeed = do
       speed' = speed + ((maxSpeed - speed) * 0.01)
     Position (p { speed = speed', diagnostic = show sailAngle })
 
-calculateSailToWindAngle sailAngle windAngle =
-  abs (sailAngle - windAngle - pi)
+calculateSailToWindAngle :: Number -> Number -> Number
+calculateSailToWindAngle sailAngle windAngle = abs (sailAngle - windAngle - pi)
 
 movePlayer :: System Unit
 movePlayer =
@@ -159,6 +181,7 @@ calculateSailForce sailToWindAngle =
   else
     0.0
 
+linear :: Number -> Number -> Number -> Number -> Number -> Number
 linear angle angleStart angleEnd valueStart valueEnd = ((angle - angleStart) / (angleEnd - angleStart) * (valueEnd - valueStart)) + valueStart
 
 clampAngle :: Number -> Number
@@ -170,15 +193,20 @@ clampAngle angle =
   else
     angle
 
+-- | the pipe form of `value # min X # max Y` is confusingly opposite, so this helps make it clearer
+clampMax :: forall a. Ord a => a -> a -> a
+clampMax = min
+
+-- | the pipe form of `value # min X # max Y` is confusingly opposite, so this helps make it clearer
+clampMin :: forall a. Ord a => a -> a -> a
+clampMin = max
+
 -----------------
 -- RenderFrame --
 -----------------
-
-scaleValue = 0.4
-
 renderFrame :: System (Array (ReaderT Context2D Effect Unit))
 renderFrame = do
-  Wind wind <- get (Entity global)
+  -- Wind wind <- get (Entity global)
   setCamera <-
     cmapAccumulate \(Player /\ Position { x, y, zoom }) -> do
       scale { scaleX: zoom, scaleY: zoom }
@@ -189,7 +217,7 @@ renderFrame = do
       scale { scaleX: 1.0 / zoom, scaleY: 1.0 / zoom }
   renderPlayers' <- renderPlayers
   renderHUD' <- renderHUD
-  pure $ [ renderWater] <> setCamera <> [ renderIslands, renderWaiting, renderSailForceGraph ] <> renderPlayers' <> unsetCamera <> renderHUD'
+  pure $ [ renderWater ] <> setCamera <> [ renderIslands, renderWaiting, renderSailForceGraph ] <> renderPlayers' <> unsetCamera <> renderHUD'
 
 renderWater :: ReaderT Context2D Effect Unit
 renderWater = do
@@ -198,25 +226,46 @@ renderWater = do
 
 renderHUD :: System (Array (ReaderT Context2D Effect Unit))
 renderHUD =
-  cmapAccumulate \(Player /\ Position { x, y, boatAngle, sailAngle, diagnostic, speed }) -> do
+  cmapAccumulate \(Player /\ Position { x, y, boatAngle, sailAngle, diagnostic, speed } /\ Wind wind) -> do
     setFillStyle "black"
     setFont "16px sans-serif"
-    fillText "Speed:" 680.0 565.0
-    fillText (truncateAt speed 2) 740.0 565.0
+    fillText ("Speed: " <> (truncateAt speed 2)) 680.0 565.0
+    -- fillText (truncateAt speed 2) 740.0 565.0
+    withContext do
+      translate { translateX: canvasWidth / 2.0 - 9.0, translateY: 20.0 }
+      rotate wind.direction
+      setFillStyle "white"
+      fillPath do
+        moveTo 6.0 0.0
+        lineTo 12.0 0.0
+        lineTo 12.0 18.0
+        lineTo 6.0 18.0
+        closePath
+      fillPath do
+        moveTo 0.0 18.0
+        lineTo 18.0 18.0
+        lineTo 9.0 36.0
+        closePath
+    withContext do
+      translate { translateX: canvasWidth / 2.0 - 18.0, translateY: 70.0 }
+      setFillStyle "white"
+      setFont "20px sans-serif"
+      fillText (truncateAt wind.velocity 2) 0.0 0.0
 
 truncateAt :: Number -> Int -> String
 truncateAt value place =
   let
     power = pow 10.0 (toNumber place)
   in
-    show $ (value * power) # round # (_ / power)
+    show $ value # (_ * power) # round # (_ / power)
 
+renderIslands :: ReaderT Context2D Effect Unit
 renderIslands = do
   renderFromCanvas "islands-canvas" (0.0) (0.0)
-  -- renderEllipse 600.0 600.0 300.0 200.0
-  -- renderEllipse 1200.0 600.0 300.0 200.0
-  -- renderEllipse 900.0 1200.0 200.0 300.0
 
+-- renderEllipse 600.0 600.0 300.0 200.0
+-- renderEllipse 1200.0 600.0 300.0 200.0
+-- renderEllipse 900.0 1200.0 200.0 300.0
 renderSailForceGraph :: ReaderT Context2D Effect Unit
 renderSailForceGraph = do
   withContext do
@@ -253,11 +302,11 @@ renderPlayers =
       renderFromCanvas "boat" (-8.0) (-20.0)
       rotate sailAngle
       renderFromCanvas "sail" (-1.5) (-24.0)
-      -- rotate (0.0 - boatAngle - sailAngle)
-      -- setFillStyle "black"
-      -- setFont "16px sans-serif"
-      -- fillText diagnostic 10.0 20.0
 
+-- rotate (0.0 - boatAngle - sailAngle)
+-- setFillStyle "black"
+-- setFont "16px sans-serif"
+-- fillText diagnostic 10.0 20.0
 preRenderBoat :: Effect Unit
 preRenderBoat =
   createPrerenderCanvas "boat" "16px" "40px" do

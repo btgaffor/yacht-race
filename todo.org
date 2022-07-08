@@ -9,6 +9,8 @@
 ** TODO wind variability
 ** TODO wind shadow
 ** TODO multiplayer
+** TODO ship balance
+   - some notes about balance here: https://www.speedandsmarts.com/toolbox/articles2/smallboat-sailing/sailing-downwind 
 * cleanup
 ** TODO copy svg to canvas [0/1]
    - [ ] create canvas element dynamically, just like preprender
