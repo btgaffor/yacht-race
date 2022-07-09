@@ -9,24 +9,34 @@ import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Ref (new)
 import Effect.Unsafe (unsafePerformEffect)
+import Math (Radians, pi)
 import Type.Prelude (Proxy(..))
-import Math (pi)
+
+type PolarVector = { angle :: Radians, magnitude :: Number }
+type CartesianVector = { x :: Number, y :: Number }
 
 ---------------------------
 -- Tagless Final Wrapper --
 ---------------------------
-
-newtype System a = System (Effect a)
+newtype System a
+  = System (Effect a)
 
 derive instance newtypeSystem :: Newtype (System a) _
+
 derive newtype instance functorSystem :: Functor System
+
 derive newtype instance applySystem :: Apply System
+
 derive newtype instance applicativeSystem :: Applicative System
+
 derive newtype instance bindSystem :: Bind System
+
 derive newtype instance monadSystem :: Monad System
+
 derive newtype instance monadEffectSystem :: MonadEffect System
 
 foreign import squishSystemArray :: forall a. Array (System a) -> System Unit
+
 foreign import travelSystemArray :: forall r. Array (System r) -> System (Array r)
 
 instance sequenceArraySystem :: SequenceArray System where
@@ -38,7 +48,6 @@ instance traverseArraySystem :: TraverseArray System where
 ----------------
 -- Components --
 ----------------
-
 data Level
   = Level Int
 
@@ -55,20 +64,23 @@ data Player
   = Player
 
 data Position
-  = Position { x :: Number, y :: Number, boatAngle :: Number, sailAngle :: Number, speed :: Number, diagnostic :: String, zoom :: Number }
-
-data Velocity
-  = Velocity Number
-
-type WindValue = { direction :: Number, velocity :: Number }
+  = Position
+    { x :: Number
+    , y :: Number
+    , boatAngle :: Number
+    , sailAngle :: Number
+    , speed :: Number
+    , diagnostic :: String
+    , zoom :: Number
+    , apparentWind :: PolarVector
+    }
 
 data Wind
-  = Wind WindValue
+  = Wind PolarVector
 
 -----------
 -- World --
 -----------
-
 type WorldData
   = { entityCounter :: Global EntityCount
     , level :: Global Level
@@ -76,10 +88,11 @@ type WorldData
     , wind :: Global Wind
     , player :: Unique Player
     , position :: Map Position
-    , velocity :: Map Velocity
     }
 
-newtype World = World WorldData
+newtype World
+  = World WorldData
+
 derive instance newtypeWorld :: Newtype (World) _
 
 proxyWorld = Proxy :: Proxy World
@@ -88,11 +101,10 @@ initWorld :: Effect World
 initWorld = do
   level <- Global <$> new (Level 1)
   gameState <- Global <$> new (GameState Waiting)
-  wind <- Global <$> new (Wind { direction: pi, velocity: 5.0 })
+  wind <- Global <$> new (Wind { angle: pi / 2.0, magnitude: 5.0 })
   entityCounter <- initStore
   player <- initStore
   position <- initStore
-  velocity <- initStore
   pure
     $ World
         { entityCounter
@@ -101,7 +113,6 @@ initWorld = do
         , wind
         , player
         , position
-        , velocity
         }
 
 world :: World
@@ -118,9 +129,6 @@ instance storePlayer :: Store World (Unique Player) Player where
 
 instance storePosition :: Store World (Map Position) Position where
   getStore _ = ask <#> unwrap <#> _.position
-
-instance storeVelocity :: Store World (Map Velocity) Velocity where
-  getStore _ = ask <#> unwrap <#> _.velocity
 
 instance storeLevel :: Store World (Global Level) Level where
   getStore _ = ask <#> unwrap <#> _.level

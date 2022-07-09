@@ -1,27 +1,23 @@
 module Main where
 
 import Prelude
-import Control.Monad.Reader (class MonadAsk, ReaderT)
-import Data.Array (range, (..), fold)
-import Data.Either (Either(..))
-import Data.Foldable (sequence_)
+
+import Control.Monad.Reader (ReaderT)
+import Data.Array (fold, (..))
 import Data.Int (toNumber)
-import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
-import Data.Traversable (for)
 import Data.Tuple.Nested ((/\))
-import Ecs (class SequenceArray, Entity(..), Not(..), cfold, cmap, cmapAccumulate, cmapM, cmapM_, destroy, get, global, modifyGlobal, newEntity, set, sequenceArray_)
-import EcsCanvas (arc, closePath, createPrerenderCanvas, fillPath, fillText, lineTo, moveTo, rect, renderEllipse, renderFromCanvas, setFillStyle, setFont, fillRect, rotate, withContext, translate, scale)
+import Ecs (Entity(..), cmap, cmapAccumulate, get, global, modifyGlobal, newEntity, sequenceArray_)
+import EcsCanvas (closePath, createPrerenderCanvas, fillPath, fillRect, fillText, lineTo, moveTo, renderFromCanvas, rotate, scale, setFillStyle, setFont, translate, withContext)
 import EcsGameLoop (Keys, canvasHeight, canvasWidth, runGameEngine)
 import Effect (Effect)
-import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Console (log, logShow)
-import Effect.Random (randomInt, randomRange)
-import Effect.Ref (Ref, modify_, read)
+import Effect.Class (liftEffect)
+import Effect.Random (randomInt)
+import Effect.Ref (Ref, read)
 import ForeignUtil (copySvgToCanvas)
 import Graphics.Canvas (Context2D)
-import Math (abs, atan, atan2, cos, pi, pow, round, sin, sqrt)
-import Model (GameState(..), GameStateValue(..), Level(..), Player(..), Position(..), System, Velocity(..), World, proxyWorld, Wind(..), WindValue)
+import Math (atan2, cos, pi, pow, round, sin, sqrt)
+import Model (CartesianVector, GameState(..), GameStateValue(..), Player(..), PolarVector, Position(..), System, Wind(..), proxyWorld)
 
 ----------
 -- Util --
@@ -35,9 +31,8 @@ generateRandomBombTimeout = randomInt 25 1200
 gameSetup :: System Unit
 gameSetup = do
   void $ newEntity $ Player
-    /\ Position { x: 400.0, y: 3690.0, boatAngle: 0.0, sailAngle: 0.0, speed: 0.0, diagnostic: "", zoom: 1.0 }
-    /\ Velocity 0.0
-  void $ newEntity $ Wind { direction: pi / 2.0, velocity: 5.0 }
+    /\ Position { x: 400.0, y: 3690.0, boatAngle: 0.0, sailAngle: 0.0, speed: 0.0, diagnostic: "", zoom: 1.0, apparentWind: { angle: 0.0, magnitude: 0.0 } }
+
 
 -----------
 -- Frame --
@@ -51,7 +46,6 @@ gameFrame keysRef = do
     , movePlayer
     ]
 
--- sequenceArray_ [ controlPlayer keysRef, clampBoatAngle, flipSailDownWind, movePlayer ]
 waitForSpace :: Ref Keys -> System Unit
 waitForSpace keysRef = do
   keys <- liftEffect $ read keysRef
@@ -98,58 +92,42 @@ clampSail =
       sailAngle' = sailAngle # clampMin 0.0 # clampMax (pi / 2.0)
     in
       -- TODO: instead of actually clamping the angle, just treat it as clamped and show that it's luffing
-      if clampAngle (boatAngle - wind.direction) <= pi then
-        Position (p { sailAngle = sailAngle' # clampMax (clampAngle (boatAngle - wind.direction)) })
+      if clampAngle (boatAngle - wind.angle) <= pi then
+        Position (p { sailAngle = sailAngle' # clampMax (clampAngle (boatAngle - wind.angle)) })
       else
-        Position (p { sailAngle = sailAngle' # clampMax (clampAngle (wind.direction - boatAngle)) })
+        Position (p { sailAngle = sailAngle' # clampMax (clampAngle (wind.angle - boatAngle)) })
 
 updatePlayerSpeed :: System Unit
 updatePlayerSpeed = do
   Wind wind <- get (Entity global)
   cmap \(Player /\ Position p@{ boatAngle, sailAngle, speed }) -> do
     let
-      -- boatVector = polarToCanvasVector { angle: boatAngle, magnitude: 1.0 }
-      -- inverseBoatVector = canvasVectorToPolar boatVector
-      -- windVector = polarToCanvasVector { angle: clampAngle (wind.direction - pi), magnitude: wind.velocity }
-      -- totalVector = addCanvasVectors boatVector windVector
-      -- totalPolar = canvasVectorToPolar totalVector
-      -- apparentWind = { angle: clampAngle (totalPolar.angle - pi), speed: totalPolar.magnitude }
-      -- apparentWind = calculateApparentWind boatAngle speed wind.direction wind.velocity
-      sailToWindAngle = calculateSailToWindAngle boatAngle sailAngle wind.direction
+      apparentWind = calculateApparentWind { angle: boatAngle, magnitude: speed } wind
+
+      sailToWindAngle = calculateSailToWindAngle boatAngle sailAngle apparentWind.angle
 
       sailFraction = calculateSailForce sailToWindAngle
 
-      sailForce = sailFraction * wind.velocity
+      sailForce = sailFraction * apparentWind.magnitude
 
       maxSpeed = (sin sailAngle) * sailForce
 
       speed' = speed + ((maxSpeed - speed) * 0.01)
-    Position (p { speed = speed', diagnostic = truncateAt maxSpeed 2 })
+    Position (p { speed = speed', apparentWind = apparentWind })
 
--- Position (p { speed = speed', diagnostic = show { oAngle: truncateAt boatAngle 2, oMagnitude: (truncateAt speed 2), angle: truncateAt inverseBoatVector.angle 2, magnitude: truncateAt inverseBoatVector.magnitude 2 } })
--- calculateApparentWind :: Number -> Number -> Number -> Number -> { angle :: Number, speed :: Number }
--- calculateApparentWind boatAngle boatSpeed windAngle windSpeed =
---   let
---     boatVector = polarToCanvasVector { angle: boatAngle, magnitude: boatSpeed }
+calculateApparentWind :: PolarVector -> PolarVector -> PolarVector
+calculateApparentWind boat wind =
+    (addCartesianVectors (polarToCartesian boat) (polarToCartesian wind)) # cartesianToPolar
 
---     windVector = polarToCanvasVector { angle: clampAngle (windAngle - pi), magnitude: windSpeed }
+polarToCartesian :: PolarVector -> CartesianVector
+polarToCartesian { angle, magnitude } = { x: (cos angle) * magnitude, y: (sin angle) * magnitude }
 
---     totalVector = addCanvasVectors boatVector windVector
+cartesianToPolar :: CartesianVector -> PolarVector
+cartesianToPolar { x, y } =
+  { angle: clampAngle (atan2 y x), magnitude: sqrt (x * x + y * y) }
 
---     totalPolar = canvasVectorToPolar totalVector
---   in
---     { angle: clampAngle (totalPolar.angle - pi), speed: totalPolar.magnitude }
-
--- polarToCanvasVector :: { angle :: Number, magnitude :: Number } -> { x :: Number, y :: Number }
--- polarToCanvasVector { angle, magnitude } = { x: negate (sin angle), y: (cos angle) * magnitude }
-
--- canvasVectorToPolar :: { x :: Number, y :: Number } -> { angle :: Number, magnitude :: Number }
--- canvasVectorToPolar { x, y } =
---   -- TODO: ugh, this would be way easier in "math" space rather than "canvas" space
---   { angle: clampAngle ((atan2 x (negate y)) - pi), magnitude: sqrt (x * x + y * y) }
-
--- addCanvasVectors :: { x :: Number, y :: Number } -> { x :: Number, y :: Number } -> { x :: Number, y :: Number }
--- addCanvasVectors vec1 vec2 = { x: vec1.x + vec2.x, y: vec1.y + vec2.y }
+addCartesianVectors :: CartesianVector -> CartesianVector -> CartesianVector
+addCartesianVectors vec1 vec2 = { x: vec1.x + vec2.x, y: vec1.y + vec2.y }
 
 calculateSailToWindAngle :: Number -> Number -> Number -> Number
 calculateSailToWindAngle boatAngle sailAngle windAngle =
@@ -229,14 +207,14 @@ renderWater = do
 
 renderHUD :: System (Array (ReaderT Context2D Effect Unit))
 renderHUD =
-  cmapAccumulate \(Player /\ Position { diagnostic, speed } /\ Wind wind) -> do
+  cmapAccumulate \(Player /\ Position { diagnostic, speed, apparentWind }) -> do
     setFillStyle "black"
     setFont "16px sans-serif"
     fillText ("Speed: " <> (truncateAt speed 2)) 680.0 565.0
     -- fillText (truncateAt speed 2) 740.0 565.0
     withContext do
       translate { translateX: canvasWidth / 2.0, translateY: 30.0 }
-      rotate (clampAngle ((negate wind.direction) + pi / 2.0))
+      rotate (clampAngle ((negate apparentWind.angle) + pi / 2.0))
       setFillStyle "white"
       fillPath do
         moveTo (-3.0) (-18.0)
@@ -251,12 +229,11 @@ renderHUD =
       translate { translateX: canvasWidth / 2.0 - 14.0, translateY: 70.0 }
       setFillStyle "white"
       setFont "20px sans-serif"
-      fillText (truncateAt wind.velocity 2) 0.0 0.0
+      fillText (truncateAt apparentWind.magnitude 2) 0.0 0.0
     withContext do
-      translate { translateX: 100.0, translateY: 100.0 }
       setFillStyle "black"
       setFont "20px sans-serif"
-      fillText diagnostic 0.0 0.0
+      fillText diagnostic 10.0 100.0
 
 truncateAt :: Number -> Int -> String
 truncateAt value place =
@@ -306,7 +283,7 @@ renderPlayers =
       rotate (clampAngle ((negate boatAngle) + pi / 2.0))
       renderFromCanvas "boat" (-8.0) (-20.0)
       -- figure out which side is downwind and render the sail on that side
-      if clampAngle (boatAngle - wind.direction) < pi then
+      if clampAngle (boatAngle - wind.angle) < pi then
         rotate (pi + sailAngle)
       else
         rotate (pi - sailAngle)
